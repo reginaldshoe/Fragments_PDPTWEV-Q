@@ -1,0 +1,29 @@
+StringID     Type       x            y            demand       ReadyTime    DueDate      ServiceTime  PartnerID    
+D0           d            40.0         50.0         0.0          0.0          2472.0       0.0          0            
+S0           f            40.0         50.0         0.0          0.0         2472.0       0.0          0            
+S5           f            31.0         84.0         0.0          0.0          2472.0       0.0          0            
+S15          f            39.0         26.0         0.0          0.0          2472.0       0.0          0            
+C1          cp           25.0         85.0         30.0         0.0         2472.0         90.0         C2          
+C2          cd           20.0         55.0         -30.0        0.0          2472.0         90.0         C1          
+C3          cp           48.0         30.0         40.0         0.0          2472.0         90.0         C4          
+C4          cd           68.0         60.0         -40.0        0.0          2472.0        90.0         C3          
+C5         cd           55.0         85.0         -20.0        0.0         2472.0        90.0         C6         
+C6         cp           55.0         85.0         20.0         0.0         2472.0         90.0          C5         
+
+Vehicle battery capacity : 77.75
+Vehicle freight capacity : 40.0
+battery consumption rate : 1.0
+inverse recharging rate : 3.47
+average velocity : 1.0
+
+
+belongs
+C1      1
+C2      2
+C3      1
+C4      2
+C5      1
+C6      2
+Numowner 2  
+end
+
