@@ -3,8 +3,8 @@
 # Implementation structure, tried to follow principles from Rist and Forbes
 # 1. enumerate full 'base' paths (defined where onboard load is empty at the start and the end of path)
 # 1a. using a helper algorithm to update the next step
-# 2. IN PROGRESS: trim paths to restricted fragments (defined where path has exactly one switch from pickup to delivery)
-# 3. TODO: minimal restricted fragments? don't understand them quite yet
+# 2. IN PROGRESS: trim paths to truncated restricted fragments (defined where path has exactly one switch from pickup to delivery)
+# 3. TODO: extend truncated restricted fragments to the next pickup
 
 import math
 
