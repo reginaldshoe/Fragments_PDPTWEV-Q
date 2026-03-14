@@ -7,7 +7,9 @@
 # 3. TODO: extend truncated restricted fragments to the next pickup
 
 import math
+from pathlib import Path
 
+path = Path.cwd() / "instances"
 
 # Used Copilot to develop read_instance block, needed some editing
 def read_instance(path):
@@ -269,7 +271,7 @@ def enumerate_base_paths(data, maxlen):
         state = ((p,), 0, onboard, E_arr, t_depart, frozenset([sid_p]), frozenset(), frozenset(), 0,distance)
         Work.add(state)
 
-    # set for array of base paths
+    # set of base paths
     Base = set()
 
     for depth in range(maxlen):
@@ -284,6 +286,7 @@ def enumerate_base_paths(data, maxlen):
                 Base.add(path)
                 continue
 
+            # otherwise extend path
             # try a delivery of currently onboard pickups
             for p_sid in onboard:
                 d_sid = p2d.get(p_sid)
@@ -306,13 +309,18 @@ def enumerate_base_paths(data, maxlen):
                     else:
                         NewWork.add(newst)
 
-            # try a charging station move
-            for s in S:
-                newst, reason = step(data, st, s)
-                if newst is None:
-                    prune(reason)
-                else:
-                    NewWork.add(newst)
+            # move to charging station (avoid station to station)
+            # TODO: can probably nuance this, only attempt station if not enough energy to do anything else
+            prev_station = (path[-1] in S)
+            if prev_station:
+                prune('prev_station')
+            if not prev_station:
+                for s in S:
+                    newst, reason = step(data, st, s)
+                    if newst is None:
+                        prune(reason)
+                    else:
+                        NewWork.add(newst)
 
         Work = NewWork
         print('depth', depth, 'work', len(Work), 'base', len(Base))
@@ -324,9 +332,10 @@ def enumerate_base_paths(data, maxlen):
 
 # trim from a base path to a restricted fragment (i.e. 1 pick-up -> delivery switch)
 
-def trim_fragments(data, base_path):
+def trim_base_path(data, base_path):
 
     nodes = data['nodes']
+    d2p = data['d2p']
 
     # find first delivery index within a base path (phase switch)
     d_switch = None
@@ -350,8 +359,69 @@ def trim_fragments(data, base_path):
     if not Pseq or not Dseq or len(Pseq) != len(Dseq):
         return []
 
-    return 0
+    # position maps for slicing
+    pos = {}
+    for t, idx in enumerate(base_path):
+        sid = nodes[idx][0]
+        pos[sid] = t
 
+    frags = []
+    p_len = len(Pseq)
+
+    # loop all possible starting point in base_path
+    for a in range(p_len):
+        start_onboard = frozenset(Pseq[:a])
+        start_sid = Pseq[a]
+        s0 = pos[start_sid]
+
+        # loop all possible end points, track what is still on board
+        for b in range(p_len):
+            kept_delivery = Dseq[:d - b]
+            removed_delivery = Dseq[d - b:]
+            # at least one delivery
+            if not kept_delivery:
+                continue
+            end_sid = kept_delivery[-1]
+            s1 = pos[end_sid]
+            if s1 < s0:
+                continue
+
+            # fragment sid
+            subseq = base_path[s0:s1 + 1]
+            seq_sids = tuple(nodes[i][0] for i in subseq)
+
+            # onboard at end of fragment
+            end_onboard = set()
+            for d_sid in removed_delivery:
+                p_sid = d2p.get(d_sid)
+                if p_sid:
+                    end_onboard.add(p_sid)
+
+            # calculate energy required to reach first charging station
+            energy_req = 0.0
+            for u, v in zip(subseq, subseq[1:]):
+                energy_req += data['energy'](u, v)
+                if nodes[v][1] == 'S' or nodes[v][2] == 'f':
+                    break
+
+            frags.append({
+                'seq': seq_sids,
+                'start_onboard': start_onboard,
+                'end_onboard': frozenset(end_onboard),
+                'contains_charge': any(nodes[i][1] == 'S' or nodes[i][2] == 'f' for i in subseq),
+                'min_start_energy': energy_req,
+            })
+
+    return frags
+
+# generate all the restricted fragments for a set of base paths
+def enumerate_fragments(data, base_paths):
+    frags = []
+    for bp in base_paths:
+        frags.extend(trim_base_path(data, bp))
+    return frags
+
+# extend
 
 
 
