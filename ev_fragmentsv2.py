@@ -135,7 +135,83 @@ def read_instance(path):
 
     return data
 
+# helper functions
+def is_station(data, sid):
+    nodes = data['nodes']
+    i = data['sid_to_i'].get(sid)
+    if i is None:
+        return False
+    return (nodes[i][1] == 'S') or (nodes[i][2] == 'f')
 
+def is_pickup(data, sid):
+    i = data['sid_to_i'].get(sid)
+    if i is None:
+        return False
+    return (data['nodes'][i][2] == 'cp')
+
+def is_delivery(data, sid):
+    i = data['sid_to_i'].get(sid)
+    if i is None:
+        return False
+    return (data['nodes'][i][2] == 'cd')
+
+def energy_ok_fullbatt(data, a_sid, b_sid):
+    a = data['sid_to_i'][a_sid]
+    b = data['sid_to_i'][b_sid]
+    return data['energy'](a, b) <= data['CapE'] + 1e-9
+
+def earliest_delivery_possible(data, p_sid):
+
+    nodes = data['nodes']
+    sid_to_i = data['sid_to_i']
+    p2d = data['p2d']
+
+    d_sid = p2d.get(p_sid)
+
+    p_i = sid_to_i[p_sid]
+    d_i = sid_to_i[d_sid]
+
+    # time windows
+    ready_p, due_p, serv_p = nodes[p_i][6], nodes[p_i][7], nodes[p_i][8]
+    ready_d, due_d = nodes[d_i][6], nodes[d_i][7]
+
+    # earliest service start at pickup
+    t0 = ready_p
+    # earliest arrival at delivery (direct)
+    t_arr = t0 + serv_p + data['tt'](pi, di)
+    if t_arr <= due_d + 1e-9:
+        # also need that pickup itself is feasible
+        return t0 <= due_p + 1e-9
+
+    # if direct timing fails, station won't help timing (it adds time), so reject.
+    return False
+
+def best_station_between(data, a_sid, b_sid):
+
+    sid_to_i = data['sid_to_i']
+    nodes = data['nodes']
+    CapE = data['CapE']
+
+    a = sid_to_i[a_sid]
+    b = sid_to_i[b_sid]
+
+    best = None
+    best_score = None
+
+    for s in data['S']:
+        s_sid = nodes[s][0]
+        e1 = data['energy'](a, s)
+        e2 = data['energy'](s, b)
+        if e1 <= CapE + 1e-9 and e2 <= CapE + 1e-9:
+            # choose the station that minimizes travel time detour
+            score = data['traveltime'](a, s) + data['traveltime'](s, b)
+            if best_score is None or score < best_score:
+                best_score = score
+                best = s_sid
+
+    return best
+
+# /end helpers
 # step update (analogous to Algo 1: Appendix B of Rist/Forbes), extend existing path to node j
 # Original paper only tracked time, load and distance
 # had to include a bunch of extra state information including energy and load capacity
@@ -165,7 +241,7 @@ def step(data, state, j):
     dist2 = total_dist
 
     # avoid revisiting same station
-    if kind_j == 'S' and sid_j in seenS:
+    if is_station(data, sid_j) and sid_j in seenS:
         return None, 'revisit_station'
 
     # time feasibility
@@ -180,7 +256,7 @@ def step(data, state, j):
         return None, 'energy'
 
     # If node is a charging station, charge to full capacity and return
-    if kind_j == 'S' or typ_j == 'f':
+    if is_station(data, sid_j):
         charge_time = (CapE - E_arr) * rech
         t_depart2 = t_start + charge_time
         E2 = CapE
@@ -196,11 +272,11 @@ def step(data, state, j):
     phase2 = phase
     deliv2 = deliv_count
 
-    # add load
-    if typ_j == 'cp':
+    # add load if pickup
+    if is_pickup(data, sid_j):
         onboard2.add(sid_j)
         seenP2.add(sid_j)
-    elif typ_j == 'cd':
+    elif is_delivery(data, sid_j):
         # must correspond to an onboard pickup
         p_sid = d2p.get(sid_j)
         if p_sid not in onboard2:
@@ -211,7 +287,7 @@ def step(data, state, j):
         if phase2 == 0:
             phase2 = 1  # switch to DELIVERY
 
-    # if pickup, check current load and make sure += new load <CapL
+    # if pickup, check current demand and make sure += new demand <CapL
     load = 0.0
     for p_sid in onboard2:
         pi = sid_to_i[p_sid]
@@ -398,6 +474,7 @@ def trim_base_path(data, base_path):
                     end_onboard.add(p_sid)
 
             # calculate energy required to reach first charging station
+            # prefix fragment would need to know this for feasibility
             energy_req = 0.0
             for u, v in zip(subseq, subseq[1:]):
                 energy_req += data['energy'](u, v)
@@ -420,9 +497,3 @@ def enumerate_fragments(data, base_paths):
     for bp in base_paths:
         frags.extend(trim_base_path(data, bp))
     return frags
-
-# extend
-
-
-
-
