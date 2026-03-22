@@ -3,11 +3,13 @@
 # Implementation structure, tried to follow principles from Rist and Forbes
 # 1. enumerate full 'base' paths (defined where onboard load is empty at the start and the end of path)
 # 1a. using a helper algorithm to update the next step
-# 2. IN PROGRESS: trim paths to truncated restricted fragments (defined where path has exactly one switch from pickup to delivery)
-# 3. TODO: extend truncated restricted fragments to the next pickup
+# 2. trim paths to truncated restricted fragments (defined where path has exactly one switch from pickup to delivery)
+# 3. extend truncated restricted fragments to the next pickup
 
 import math
 from pathlib import Path
+import os
+import gurobipy as gp
 
 path = Path.cwd() / "instances"
 
@@ -143,17 +145,24 @@ def is_station(data, sid):
         return False
     return (nodes[i][1] == 'S') or (nodes[i][2] == 'f')
 
+def is_customer(data, sid):
+    nodes = data['nodes']
+    i = data['sid_to_i'].get(sid)
+    if i is None:
+        return False
+    return nodes[i][1] == 'C'
+
 def is_pickup(data, sid):
     i = data['sid_to_i'].get(sid)
     if i is None:
         return False
-    return (data['nodes'][i][2] == 'cp')
+    return data['nodes'][i][2] == 'cp'
 
 def is_delivery(data, sid):
     i = data['sid_to_i'].get(sid)
     if i is None:
         return False
-    return (data['nodes'][i][2] == 'cd')
+    return data['nodes'][i][2] == 'cd'
 
 def energy_ok_fullbatt(data, a_sid, b_sid):
     a = data['sid_to_i'][a_sid]
@@ -161,13 +170,11 @@ def energy_ok_fullbatt(data, a_sid, b_sid):
     return data['energy'](a, b) <= data['CapE'] + 1e-9
 
 def earliest_delivery_possible(data, p_sid):
-
     nodes = data['nodes']
     sid_to_i = data['sid_to_i']
     p2d = data['p2d']
 
     d_sid = p2d.get(p_sid)
-
     p_i = sid_to_i[p_sid]
     d_i = sid_to_i[d_sid]
 
@@ -178,12 +185,12 @@ def earliest_delivery_possible(data, p_sid):
     # earliest service start at pickup
     t0 = ready_p
     # earliest arrival at delivery (direct)
-    t_arr = t0 + serv_p + data['tt'](pi, di)
+    t_arr = t0 + serv_p + data['traveltime'](p_i, d_i)
     if t_arr <= due_d + 1e-9:
         # also need that pickup itself is feasible
         return t0 <= due_p + 1e-9
 
-    # if direct timing fails, station won't help timing (it adds time), so reject.
+    # if direct timing fails, station won't help timing
     return False
 
 def best_station_between(data, a_sid, b_sid):
@@ -210,6 +217,153 @@ def best_station_between(data, a_sid, b_sid):
                 best = s_sid
 
     return best
+
+# Dominance + metadata helpers
+
+# customer locations (excludes stations)
+def cust_locs(seq, exclude_last):
+    if not seq:
+        return frozenset()
+    out = []
+    end_sid = seq[-1]
+    for sid in seq:
+        if is_customer(data, sid):
+            out.append(sid)
+    if exclude_last and is_customer(data, end_sid):
+        out = [x for x in out if x != end_sid]
+    return frozenset(out)
+
+# compute time windows, Tf, Ef, Lf
+
+def compute_T_E_L(data, seq):
+
+    nodes = data['nodes']
+    sid_to_i = data['sid_to_i']
+    CapE = data['CapE']
+    rech = data['rech']
+    full_charge_time = CapE * rech
+
+    # per-node ready/due/service and station marker
+    def ready(sid): return nodes[sid_to_i[sid]][6]
+    def due(sid):   return nodes[sid_to_i[sid]][7]
+    def serv(sid):  return nodes[sid_to_i[sid]][8]
+
+    # time spent at sid before leaving it
+    def node_process_time(sid):
+        # pessimistic view of station charging (make sure dominance based on like-for-like comparison)
+        if is_station(data, sid):
+            return full_charge_time
+        else:
+            return serv(sid)
+
+    # Tf - duration from begin service at start frag to begin service at end frag
+    Tf = 0.0
+    for u, v in zip(seq, seq[1:]):
+        ui = sid_to_i[u]
+        vi = sid_to_i[v]
+        Tf += node_process_time(u) + data['traveltime'](ui, vi)
+
+    # Ef - earliest time service may start at end of frag
+    t = ready(seq[0])  # start at earliest feasible at start
+    for u, v in zip(seq, seq[1:]):
+        ui = sid_to_i[u]
+        vi = sid_to_i[v]
+        t = t + node_process_time(u) + data['traveltime'](ui, vi)
+        t = max(ready(v), t)
+    Ef = t
+
+    # Lf - latest-start time service may start at start of frag
+    t = due(seq[-1])  # latest start at end
+    # walk backwards: enforce arriving at next node by its current latest start t
+    for u, v in zip(reversed(seq[:-1]), reversed(seq[1:])):
+        ui = sid_to_i[u]
+        vi = sid_to_i[v]
+        # to start service at v by time t, we must start u by:
+        t = t - data['traveltime'](ui, vi) - node_process_time(u)
+        t = min(due(u), t)
+    Lf = t
+
+    return Tf, Ef, Lf
+
+# eliminate exact duplicates
+def dedup_exact(frags):
+    seen = set()
+    out = []
+    for f in frags:
+        sig = (f['seq'], f['start_onboard'], f['end_onboard'])
+        if sig in seen:
+            continue
+        seen.add(sig)
+        out.append(f)
+    return out
+
+# eliminate duplicates based on metadata
+def dedup_by_signature(frags):
+    seen = set()
+    out = []
+    for f in frags:
+        sig = (f['seq'], f['Ef'], f['Lf'], f['Tf'], f['Emin'])
+        if sig in seen:
+            continue
+        seen.add(sig)
+        out.append(f)
+    return out
+
+# attach Tf/Ef/Lf/Emin and dominance keys for frags (flag for RF or EF)
+def attach_metadata(data, frags, exclude_last_ef = False):
+    out = []
+    for f in frags:
+        seq = f['seq']
+        Tf, Ef, Lf = compute_T_E_L(data, seq)
+        g = dict(f)
+        g['Tf'] = Tf
+        g['Ef'] = Ef
+        g['Lf'] = Lf
+        g['Emin'] = g['min_start_energy']  # already computed in trimming
+        g['Start'] = seq[0]
+        g['End'] = seq[-1]
+        g['LocsC'] = cust_locs(seq, exclude_last=exclude_last_ef)
+        # Dominance key without stations
+        g['dom_key'] = (g['Start'], g['End'], g['start_onboard'], g['end_onboard'], g['LocsC'])
+        out.append(g)
+    return out
+
+# dominance within same dom_key. Smaller Ef/Tf/Emin and larger Lf is better.
+def dominates(a, b):
+
+    if a['dom_key'] != b['dom_key']:
+        return False
+    better_or_equal = (a['Ef'] <= b['Ef'] + 1e-9 and
+                       a['Lf'] >= b['Lf'] - 1e-9 and
+                       a['Tf'] <= b['Tf'] + 1e-9 and
+                       a['Emin'] <= b['Emin'] + 1e-9)
+    strictly_better = (a['Ef'] < b['Ef'] - 1e-9 or
+                       a['Lf'] > b['Lf'] + 1e-9 or
+                       a['Tf'] < b['Tf'] - 1e-9 or
+                       a['Emin'] < b['Emin'] - 1e-9)
+    return better_or_equal and strictly_better
+
+# filtration function
+def filter_by_key(items):
+    keep = []
+    for x in items:
+        # if any in kept dominates x -> drop x
+        if any(dominates(k, x) for k in keep):
+            continue
+        # else remove those dominated by x
+        keep = [k for k in keep if not dominates(x, k)]
+        keep.append(x)
+    return keep
+
+# Group by fragments by dom_key then apply filter in each group.
+def dominance_filter(items):
+    buckets = {}
+    for f in items:
+        buckets.setdefault(f['dom_key'], []).append(f)
+    out = []
+    for key, group in buckets.items():
+        out.extend(filter_by_key(group))
+    return out
 
 # /end helpers
 # step update (analogous to Algo 1: Appendix B of Rist/Forbes), extend existing path to node j
@@ -413,6 +567,9 @@ def trim_base_path(data, base_path):
     nodes = data['nodes']
     d2p = data['d2p']
 
+    P = list(data['P'])
+    D = list(data['D'])
+
     # find first delivery index within a base path (phase switch)
     d_switch = None
     for d, idx in enumerate(base_path):
@@ -428,8 +585,8 @@ def trim_base_path(data, base_path):
     delivery_part = base_path[d_switch:]
 
     # convert back to sid
-    Pseq = [nodes[i][0] for i in pickup_part if nodes[i][2] == 'cp']
-    Dseq = [nodes[i][0] for i in delivery_part if nodes[i][2] == 'cd']
+    Pseq = [nodes[i][0] for i in pickup_part if i in P]
+    Dseq = [nodes[i][0] for i in delivery_part if i in D]
 
     # validate that both pickup/delivery occurs
     if not Pseq or not Dseq or len(Pseq) != len(Dseq):
@@ -474,7 +631,7 @@ def trim_base_path(data, base_path):
                     end_onboard.add(p_sid)
 
             # calculate energy required to reach first charging station
-            # prefix fragment would need to know this for feasibility
+            # prefix fragment in network would need to know this for feasibility
             energy_req = 0.0
             for u, v in zip(subseq, subseq[1:]):
                 energy_req += data['energy'](u, v)
@@ -497,3 +654,158 @@ def enumerate_fragments(data, base_paths):
     for bp in base_paths:
         frags.extend(trim_base_path(data, bp))
     return frags
+
+# extend fragments to new pickup i, and attach/update metadata
+def extend_all_fragments(data, frags):
+
+    nodes = data['nodes']
+    sid_to_i = data['sid_to_i']
+    p2d = data['p2d']
+    CapL = data['CapL']
+    P = data['P']
+
+    pickups = [nodes[i][0] for i in P]  # list of pickup sids
+    out = []
+
+    for f in frags:
+        seq = f['seq']
+        start_on = set(f['start_onboard'])
+        end_on = set(f['end_onboard'])
+
+        # visited customers + stations from sequence
+        visited = set(seq)
+
+        # end sid of this fragment
+        end_sid = seq[-1]
+
+        # depot extension if end_onboard empty
+        if len(end_on) == 0:
+            out.append({
+                **f,
+                'ext_to': 'D0',
+                'ext_station': None,
+                'ext_delivery': None,
+                # end_onboard unchanged
+            })
+
+        # extend to every pickup i
+        for i_sid in pickups:
+            # EXCLUSIONS
+            # exclude if next pickup already visited in fragment
+            if i_sid in visited:
+                continue
+            # exclude if next pickup had been onboard at some stage during fragment
+            if i_sid in start_on or i_sid in end_on:
+                continue
+            # exclude next pickup if its delivery already occurred inside the fragment
+            d_sid = p2d.get(i_sid)
+            if d_sid in visited:
+                continue
+
+            # capacity after picking i
+            new_end_on = end_on | {i_sid}
+            if sum(nodes[sid_to_i[n]][5] for n in new_end_on) > CapL + 1e-9:
+                continue
+
+            # the request from pickup to delivery must be time-feasible on its own
+            if not earliest_delivery_possible(data, i_sid):
+                continue
+
+            # energy reachability end -> i (allow one station)
+            ext_station = None
+            if energy_ok_fullbatt(data, end_sid, i_sid):
+                ext_station = None
+            else:
+                ext_station = best_station_between(data, end_sid, i_sid)
+                if ext_station is None:
+                    continue
+
+            # build extended sequence
+            if ext_station is None:
+                seq2 = seq + (i_sid,)
+            else:
+                seq2 = seq + (ext_station, i_sid)
+
+            out.append({
+                'seq': seq2,
+                'start_onboard': f['start_onboard'],
+                'end_onboard': frozenset(new_end_on),
+                'contains_charge': f['contains_charge'] or (ext_station is not None),
+                'min_start_energy': f['min_start_energy'],
+                'ext_to': i_sid,
+                'ext_station': ext_station,
+                'ext_delivery': d_sid,
+            })
+
+    return out
+
+# stats helper functions to test fragment output
+
+def stats_frags(frags):
+    lens = [len(f['seq']) for f in frags]
+    with_ch = sum(1 for f in frags if f['contains_charge'])
+    out = {
+        'count': len(frags),
+        'min_len': min(lens),
+        'max_len': max(lens),
+        'avg_len': sum(lens) / len(lens),
+        'with_charging': with_ch,
+        'without_charging': len(frags) - with_ch,
+    }
+    print(out)
+
+def stats_ext(efrags):
+    if not efrags:
+        out = {'count': 0}
+        print(out)
+        return out
+    lens = [len(f['seq']) for f in efrags]
+    depot_end = sum(1 for f in efrags if f.get('ext_to') == 'D0')
+    with_station = sum(1 for f in efrags if f.get('ext_station') is not None)
+    out = {
+        'count': len(efrags),
+        'min_len': min(lens),
+        'max_len': max(lens),
+        'avg_len': sum(lens)/len(lens),
+        'depot_extensions': depot_end,
+        'extensions_with_station': with_station,
+    }
+    print(out)
+    return out
+
+# enumerate fragments and stats
+instance = 'c101C12_3.txt'
+data = read_instance(path / instance)
+base, pruned = enumerate_base_paths(data, 18)
+print(pruned)
+frags = enumerate_fragments(data, base)
+
+print("RF stats pre dominance filter")
+stats_frags(frags)
+
+r_frags_dedup = dedup_exact(frags)
+r_frags_meta = attach_metadata(data, r_frags_dedup, exclude_last_ef = False)
+r_frags_undom = dominance_filter(r_frags_meta)
+r_frags_undom = dedup_by_signature(r_frags_undom)
+
+print("RF stats post dominance filter")
+stats_frags(r_frags_undom)
+
+
+print("RF raw:", len(frags),"EF dedup:", len(r_frags_dedup), "RF meta:", len(r_frags_meta), "RF undominated:", len(r_frags_undom))
+
+e_frags = extend_all_fragments(data, r_frags_undom)
+print("EF stats pre dominance filtering")
+stats = stats_ext(e_frags)
+
+
+e_frags_dedup = dedup_exact(e_frags)
+e_frags_meta = attach_metadata(data, e_frags_dedup, exclude_last_ef = True)
+e_frags_undom = dominance_filter(e_frags_meta)
+e_frags_undom = dedup_by_signature(e_frags_undom)
+
+print("EF stats post dominance filtering")
+e_stats = stats_ext(e_frags_undom)
+print("EF raw:", len(e_frags), "EF dedup:", len(e_frags_dedup), "EF meta:", len(e_frags_meta), "EF undominated:", len(e_frags_undom))
+
+# start MILP formulation
