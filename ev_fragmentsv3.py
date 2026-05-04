@@ -1601,16 +1601,12 @@ best_payload = None
 
 K_upper = len(data['P'])
 
+t0_solve = perf_counter()
 for K in range(1, K_upper + 1):
     print(f"\n--- solving with exact K = {K} ---")
 
     m, x, arcs, node_id, depot_u, arc_by_id, theta, M = build_master_model(
-        data, e_frags_undom, K_max=K, force_exact_K=True
-    )
-
-    m.Params.OutputFlag = 0
-    m.Params.LazyConstraints = 1
-    m.Params.Threads = 1
+        data, e_frags_undom, K_max=K, force_exact_K=True)
 
     def cb(model, where):
         return callback(model, where, x, arcs, node_id, depot_u, data, theta, M)
@@ -1635,6 +1631,7 @@ for K in range(1, K_upper + 1):
             "chosen": chosen,
             "arc_by_id": arc_by_id
         }
+t1_solve = perf_counter() #time off
 
 print("\nBEST SOLUTION:")
 print("K =", best_payload["K"])
@@ -1642,21 +1639,26 @@ print("Obj =", best_payload["obj"])
 print("Theta =", best_payload["theta"])
 
 
-t1_solve = perf_counter()
+chosen = best_payload["chosen"]
+arc_by_id = best_payload["arc_by_id"]
 
-if m.Status == gp.GRB.INFEASIBLE:
-    m.computeIIS()
-    m.write("master_iis.ilp")
-    print("IIS written to master_iis.ilp")
+routes = extract_routes_from_solution(chosen, arc_by_id)
 
-# Print chosen arcs if solved
-if m.SolCount > 0:
-    chosen = [aid for aid, var in x.items() if var.X > 0.5]
-    print("Chosen arcs:", chosen)
-    for aid in chosen:
-        a = arc_by_id[aid] if 'arc_by_id' in globals() else next(xx for xx in arcs if xx['id'] == aid)
-        print(a['id'], a['Start'], "->", a['End'], "start_on", a['start_onboard'], "end_on", a['end_onboard'], "seq",
-              a['seq'])
+# diagnose issues with
+if DEBUG:
+    if m.Status == gp.GRB.INFEASIBLE:
+        m.computeIIS()
+        m.write("master_iis.ilp")
+        print("IIS written to master_iis.ilp")
+
+    # Print chosen arcs if solved
+    if m.SolCount > 0:
+        chosen = [aid for aid, var in x.items() if var.X > 0.5]
+        print("Chosen arcs:", chosen)
+        for aid in chosen:
+            a = arc_by_id[aid] if 'arc_by_id' in globals() else next(xx for xx in arcs if xx['id'] == aid)
+            print(a['id'], a['Start'], "->", a['End'], "start_on", a['start_onboard'], "end_on", a['end_onboard'], "seq",
+                  a['seq'])
 
 pre_time = t1_preprocess - t0_preprocess
 sol_time = t1_solve - t0_solve
@@ -1726,5 +1728,4 @@ print("Objective =", best_payload["obj"])
 #     print("DP says infeasible at leg", fail_i, ":", skeleton[fail_i], "->", skeleton[fail_i+1])
 #
 # print("theta =", theta.X)
-base_dist = sum(arc_by_id[aid]['Df'] * x[aid].X for aid in x if x[aid].X > 0.5)
-print("base distance =", base_dist, "objective =", m.ObjVal, "base+theta =", base_dist + theta.X)
+
