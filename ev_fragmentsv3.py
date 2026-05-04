@@ -16,8 +16,11 @@ from pathlib import Path
 import os
 import gurobipy as gp
 from time import perf_counter
+import heapq
 
 path = Path.cwd() / "instances"
+
+DEBUG = False
 
 # Used Copilot to develop read_instance block, needed some editing
 def read_instance(path):
@@ -186,6 +189,18 @@ def compute_Emin(data, seq_sids):
             break
     return total
 
+def max_dist(data):
+    nodes = range(len(data['nodes']))
+    max_dist = 0.0
+    for i in nodes:
+        for j in nodes:
+            if i == j:
+                continue
+            d = data['dist'](i, j)
+            if d > max_dist:
+                max_dist = d
+    return max_dist
+    
 
 def earliest_delivery_possible(data, p_sid):
     nodes = data['nodes']
@@ -303,6 +318,17 @@ def compute_T_E_L(data, seq):
 
     return Tf, Ef, Lf
 
+def compute_distance(data, seq_sids):
+    sid_to_i = data['sid_to_i']
+    dist_fn = data['dist']
+    total = 0.0
+    for u_sid, v_sid in zip(seq_sids, seq_sids[1:]):
+        ui = sid_to_i[u_sid]
+        vi = sid_to_i[v_sid]
+        total += dist_fn(ui, vi)
+    return total
+
+
 # eliminate exact duplicates
 def dedup_exact(frags):
     seen = set()
@@ -337,6 +363,7 @@ def attach_metadata(data, frags, exclude_last_ef = False):
         g['Tf'] = Tf
         g['Ef'] = Ef
         g['Lf'] = Lf
+        g['Df'] = compute_distance(data, seq)
         g['Emin'] = g['min_start_energy']  # already computed in trimming
         g['Start'] = seq[0]
         g['End'] = seq[-1]
@@ -571,7 +598,8 @@ def enumerate_base_paths(data, maxlen):
                         NewWork.add(newst)
 
         Work = NewWork
-        print('depth', depth, 'work', len(Work), 'base', len(Base))
+        if DEBUG:
+            print('depth', depth, 'work', len(Work), 'base', len(Base))
         if not Work:
             break
 
@@ -660,7 +688,8 @@ def trim_base_path(data, base_path):
                 'contains_charge': any(nodes[i][1] == 'S' or nodes[i][2] == 'f' for i in subseq),
                 'min_start_energy': energy_req,
             })
-    print("trim_base_path returning", len(frags), "frags")
+    if DEBUG:
+        print("trim_base_path returning", len(frags), "frags")
     return frags
 
 # generate all the restricted fragments for a set of base paths
@@ -804,40 +833,45 @@ def stats_ext(efrags):
 # enumerate fragments and stats
 instance = 'c101C6.txt'
 data = read_instance(path / instance)
-t0_preprocess = perf_counter()
+
+t0_preprocess = perf_counter() #time on
+
+#base paths
 base, pruned = enumerate_base_paths(data, 18)
-print(pruned)
 frags = enumerate_fragments(data, base)
 
-print("RF stats pre dominance filter")
-stats_frags(frags)
-
+#restricted fragments
 r_frags_dedup = dedup_exact(frags)
 r_frags_meta = attach_metadata(data, r_frags_dedup, exclude_last_ef = False)
 r_frags_undom = dominance_filter(r_frags_meta)
 r_frags_undom = dedup_by_signature(r_frags_undom)
 
-print("RF stats post dominance filter")
-stats_frags(r_frags_undom)
-
-
-print("RF raw:", len(frags),"EF dedup:", len(r_frags_dedup), "RF meta:", len(r_frags_meta), "RF undominated:", len(r_frags_undom))
-
+#extended fragments
 e_frags = extend_all_fragments(data, r_frags_undom)
-print("EF stats pre dominance filtering")
-stats = stats_ext(e_frags)
-
-
 e_frags_dedup = dedup_exact(e_frags)
 e_frags_meta = attach_metadata(data, e_frags_dedup, exclude_last_ef = True)
 e_frags_undom = dominance_filter(e_frags_meta)
 e_frags_undom = dedup_by_signature(e_frags_undom)
 
-print("EF stats post dominance filtering")
-e_stats = stats_ext(e_frags_undom)
-print("EF raw:", len(e_frags), "EF dedup:", len(e_frags_dedup), "EF meta:", len(e_frags_meta), "EF undominated:", len(e_frags_undom))
 
-t1_preprocess = perf_counter()
+t1_preprocess = perf_counter() #time off
+
+# stats for fragments
+if DEBUG:
+    print(pruned)
+    print("RF stats pre dominance filter")
+    stats_frags(frags)
+    print("RF stats post dominance filter")
+    stats_frags(r_frags_undom)
+    print("RF raw:", len(frags),"EF dedup:", len(r_frags_dedup), "RF meta:", len(r_frags_meta), "RF undominated:", len(r_frags_undom))
+    print("EF stats pre dominance filtering")
+    stats_ext(e_frags)
+    print("EF stats post dominance filtering")
+    stats_ext(e_frags_undom)
+    print("EF raw:", len(e_frags), "EF dedup:", len(e_frags_dedup), "EF meta:", len(e_frags_meta), "EF undominated:",
+          len(e_frags_undom))
+
+###############
 # start MILP formulation
 # generally speaking, the network graph has the fragments as arcs, and the nodes are location 'states'
 
@@ -854,6 +888,7 @@ def raw_depot_arcs(data):
         # Build a fragment dict
         seq = (depot_sid, p_sid)
         Tf, Ef, Lf = compute_T_E_L(data, seq)
+        Df = compute_distance(data, seq)
 
         # depot parameters (many are empty)
         out.append({
@@ -866,6 +901,7 @@ def raw_depot_arcs(data):
             'Tf': Tf,
             'Ef': Ef,
             'Lf': Lf,
+            'Df': Df,
             'Emin': 0.0,
             'LocsC': frozenset(),
             'ext_to': p_sid,
@@ -904,11 +940,220 @@ def build_network(ef_list):
             'Tf': float(f['Tf']),
             'Ef': float(f['Ef']),
             'Lf': float(f['Lf']),
+            'Df': float(f['Df']),
             'Emin': float(f.get('Emin', f.get('min_start_energy', 0.0))),
             'LocsC': f.get('LocsC', frozenset()),
         })
 
     return node_id, arcs
+
+# callback helpers
+
+# =========================
+# DP subproblem (stations insertion), objective = min added distance
+# Stations have no time windows (treated always open).
+# where station TW covers planning horizon.
+# =========================
+
+def dp_leg_frontier_charge_to_full(data, u_sid, v_sid, t0, E0, max_station_visits=3):
+    """
+    Single skeleton leg u -> v, stations can be inserted.
+    Returns a list of NONDOMINATED arrival labels at v.
+
+    Each label is:
+      (dist_leg, t_start_at_v, E_arr_at_v, path_tuple)
+
+    Stations: always open (no TW).
+    Destination v: TW enforced.
+    Charging: if station visited, charge to full with time (CapE - E_arr)/rech.
+    """
+    sid_to_i = data['sid_to_i']
+    dist_fn  = data['dist']
+    tt_fn    = data['traveltime']
+    en_fn    = data['energy']
+    CapE     = data['CapE']
+    rech     = data['rech']
+    horizon  = data['horizon']
+
+    v_i = sid_to_i[v_sid]
+    v_ready = data['nodes'][v_i][6]
+    v_due   = data['nodes'][v_i][7]
+
+    station_sids = [data['nodes'][i][0] for i in data['S']]
+
+    # PQ state: (dist_so_far, dep_time, -dep_energy, cur_sid, path_tuple, stations_used, visited_stations_frozenset)
+    pq = []
+    heapq.heappush(pq, (0.0, t0, -E0, u_sid, (u_sid,), 0, frozenset()))
+
+    # nondominated labels per intermediate node (including stations): (dist, time, energy)
+    best_at_node = {u_sid: [(0.0, t0, E0)]}
+
+    # nondominated arrivals at v: (dist, t_start, E_arr, path)
+    arrivals = []
+
+    def dominates3(a, b, eps=1e-9):
+        # a,b = (dist, time, energy)
+        da, ta, ea = a
+        db, tb, eb = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def keep_nondominated_list(L, newlab3):
+        # keep nondominated in list of (d,t,e)
+        for lab in L:
+            if dominates3(lab, newlab3):
+                return L, False
+        out = [lab for lab in L if not dominates3(newlab3, lab)]
+        out.append(newlab3)
+        return out, True
+
+    def dominates_arr(a, b, eps=1e-9):
+        # a,b = (dist, t_start, E_arr, path)
+        da, ta, ea, _ = a
+        db, tb, eb, _ = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def keep_arrivals(arrivals, cand):
+        for lab in arrivals:
+            if dominates_arr(lab, cand):
+                return arrivals
+        out = [lab for lab in arrivals if not dominates_arr(cand, lab)]
+        out.append(cand)
+        # optional: sort for neatness
+        out.sort(key=lambda x: (x[0], x[1], -x[2]))
+        return out
+
+    while pq:
+        d_sofar, t_dep, negE, cur_sid, path, k, visitedS = heapq.heappop(pq)
+        E_dep = -negE
+
+        # Explore either go to v, or to a station (if budget remains)
+        next_nodes = [v_sid]
+        if k < max_station_visits:
+            next_nodes += station_sids
+
+        for nxt_sid in next_nodes:
+            if nxt_sid == cur_sid:
+                continue
+            if nxt_sid in visitedS:
+                continue
+
+            ui = sid_to_i[cur_sid]
+            ni = sid_to_i[nxt_sid]
+
+            e_need = en_fn(ui, ni)
+            if e_need > E_dep + 1e-9:
+                continue
+
+            t_arr = t_dep + tt_fn(ui, ni)
+            E_arr = E_dep - e_need
+            d_new = d_sofar + dist_fn(ui, ni)
+
+            if nxt_sid == v_sid:
+                t_start = max(t_arr, v_ready)
+                if t_start > v_due + 1e-9:
+                    continue
+                cand = (d_new, t_start, E_arr, path + (nxt_sid,))
+                arrivals = keep_arrivals(arrivals, cand)
+                continue
+
+            # station
+            if t_arr > horizon + 1e-9:
+                continue
+
+            charge_time = (CapE - E_arr) / rech
+            t_dep2 = t_arr + charge_time
+            E_dep2 = CapE
+
+            lab3 = (d_new, t_dep2, E_dep2)
+            lst = best_at_node.get(nxt_sid, [])
+            lst2, kept = keep_nondominated_list(lst, lab3)
+            if not kept:
+                continue
+            best_at_node[nxt_sid] = lst2
+
+            new_visitedS = visitedS | frozenset([nxt_sid])
+            heapq.heappush(pq, (d_new, t_dep2, -E_dep2, nxt_sid, path + (nxt_sid,), k+1, new_visitedS))
+
+    return arrivals  # may be empty
+
+
+def dp_route_min_dist(data, skeleton_sids, t0=0.0, E0=None,
+                      max_station_visits_per_leg=3,
+                      max_labels_per_node=50):
+    """
+    Multi-leg DP over mandatory skeleton nodes (no stations in skeleton_sids).
+    Returns:
+      ok, best_dist, best_full_path_tuple, fail_index
+    fail_index = i means failure on leg skeleton[i] -> skeleton[i+1].
+    """
+    if E0 is None:
+        E0 = data['CapE']
+
+    for sid in skeleton_sids:
+        if is_station(data, sid):
+            raise ValueError(f"skeleton contains station {sid}; filter stations out first")
+
+    sid_to_i = data['sid_to_i']
+
+    # label at mandatory node: (dist_so_far, dep_time, dep_energy, full_path_tuple)
+    def dominates_label(a, b, eps=1e-9):
+        da, ta, ea, _ = a
+        db, tb, eb, _ = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def insert_label(L, newlab):
+        for lab in L:
+            if dominates_label(lab, newlab):
+                return L
+        out = [lab for lab in L if not dominates_label(newlab, lab)]
+        out.append(newlab)
+        out.sort(key=lambda x: (x[0], x[1], -x[2]))
+        return out[:max_labels_per_node]
+
+    start_sid = skeleton_sids[0]
+    labels = {start_sid: [(0.0, t0, E0, (start_sid,))]}
+
+    for i in range(len(skeleton_sids) - 1):
+        u = skeleton_sids[i]
+        v = skeleton_sids[i+1]
+
+        next_labels_for_v = []
+
+        for (d_sofar, t_dep, E_dep, path_sofar) in labels.get(u, []):
+            arrivals = dp_leg_frontier_charge_to_full(
+                data, u, v, t_dep, E_dep,
+                max_station_visits=max_station_visits_per_leg
+            )
+
+            # each arrival is (d_leg, t_start_v, E_arr_v, path_leg)
+            for (d_leg, t_start_v, E_arr_v, path_leg) in arrivals:
+                # service at v
+                v_i = sid_to_i[v]
+                serv_v = data['nodes'][v_i][8]
+                t_dep_v = t_start_v + serv_v
+                E_dep_v = E_arr_v
+
+                # stitch paths (avoid duplicating u)
+                if path_sofar[-1] == path_leg[0]:
+                    stitched = path_sofar + path_leg[1:]
+                else:
+                    stitched = path_sofar + path_leg
+
+                newlab = (d_sofar + d_leg, t_dep_v, E_dep_v, stitched)
+                next_labels_for_v.append(newlab)
+
+        if not next_labels_for_v:
+            return False, None, None, i  # failed on leg i
+
+        L_v = []
+        for lab in next_labels_for_v:
+            L_v = insert_label(L_v, lab)
+        labels[v] = L_v
+
+    final_sid = skeleton_sids[-1]
+    best = min(labels[final_sid], key=lambda x: (x[0], x[1], -x[2]))
+    best_dist, best_t, best_E, best_path = best
+    return True, best_dist, best_path, None
 
 # build gurobi model + access licence
 
@@ -929,7 +1174,89 @@ def make_gurobi_env():
     # return default env if there is no licence
     return gp.Env()
 
-def build_master_model(data, ef_undom, K_max):
+if DEBUG:
+    def brute_force_best_k1(data):
+        # operations are customer nodes C* that are pickups/deliveries
+        nodes = data['nodes']
+        sid_to_i = data['sid_to_i']
+        CapL = data['CapL']
+
+        # collect pickup and delivery SIDs
+        pickups = [nodes[i][0] for i in data['P']]
+        deliveries = [nodes[i][0] for i in data['D']]
+        p2d = data['p2d']
+
+        # demand by sid
+        demand = {nodes[i][0]: nodes[i][5] for i in range(len(nodes))}
+
+        # precedence: pickup must come before its delivery
+        def ok_precedence(seq):
+            pos = {sid: k for k, sid in enumerate(seq)}
+            for p, d in p2d.items():
+                if pos[p] > pos[d]:
+                    return False
+            return True
+
+        # capacity feasibility along seq (starting empty)
+        def ok_capacity(seq):
+            load = 0.0
+            for sid in seq:
+                load += demand[sid]
+                if load > CapL + 1e-9:
+                    return False
+                if load < -1e-9:  # shouldn't happen in 1-1 PDP
+                    return False
+            return abs(load) < 1e-6  # end empty
+        # recursive generation of feasible sequences (topological + capacity pruning)
+        best = None
+        best_seq = None
+
+        # maintain sets of available pickups/deliveries
+        all_ops = pickups + deliveries
+        # deliveries become available only after their pickup is visited
+        def rec(prefix, visited, load):
+            nonlocal best, best_seq
+            if len(prefix) == len(all_ops):
+                # full sequence
+                seq = list(prefix)
+                # evaluate via DP
+                skeleton = ['D0'] + seq + ['D0']
+                ok, dp_dist, dp_path, fail_i = dp_route_min_dist(data, skeleton, t0=0.0, E0=data['CapE'],
+                                                                max_station_visits_per_leg=3, max_labels_per_node=200)
+                if ok:
+                    if best is None or dp_dist < best:
+                        best = dp_dist
+                        best_seq = skeleton
+                return
+
+            # build candidate next ops
+            candidates = []
+            for sid in pickups:
+                if sid not in visited:
+                    # pickup always allowed if capacity allows
+                    if load + demand[sid] <= CapL + 1e-9:
+                        candidates.append(sid)
+            for sid in deliveries:
+                if sid not in visited:
+                    # allowed only if its pickup already visited
+                    p = data['d2p'][sid]
+                    if p in visited:
+                        # delivery reduces load (negative demand)
+                        if load + demand[sid] >= -1e-9:
+                            candidates.append(sid)
+
+            for nxt in candidates:
+                rec(prefix + (nxt,), visited | {nxt}, load + demand[nxt])
+
+        rec(tuple(), set(), 0.0)
+        return best, best_seq
+
+    best_dist, best_skeleton = brute_force_best_k1(data)
+    print("BRUTE FORCE K=1 best DP distance =", best_dist)
+    print("BRUTE FORCE best skeleton =", best_skeleton)
+
+
+def build_master_model(data, ef_undom, K_max, force_exact_K = False):
 
     # add start arcs to existing frags
     depot_arcs = raw_depot_arcs(data)
@@ -963,8 +1290,10 @@ def build_master_model(data, ef_undom, K_max):
         if a['End'] in end_at_pickup:
             end_at_pickup[a['End']].append(a['id'])
 
-    for p, arcs_p in end_at_pickup.items():
-        print(p, len(arcs_p))
+    # diagnose
+    if DEBUG:
+        for p, arcs_p in end_at_pickup.items():
+            print(p, len(arcs_p))
 
     arc_by_id = {a['id']: a for a in arcs}
 
@@ -974,17 +1303,23 @@ def build_master_model(data, ef_undom, K_max):
             v = arc_by_id[aid]['v']
             if len(out_arcs[v]) > 0:
                 good += 1
-        print(p, "coverage arcs:", len(end_at_pickup[p]), "good (non-deadend):", good)
+        # diagnose
+        if DEBUG:
+            print(p, "coverage arcs:", len(end_at_pickup[p]), "good (non-deadend):", good)
 
     # Create model (w/ licence)
     env = make_gurobi_env()
     m = gp.Model(env=env)
 
     X = {a['id']: m.addVar(vtype=gp.GRB.BINARY) for a in arcs}
+    theta = m.addVar(vtype=gp.GRB.CONTINUOUS)
 
+    for a in arcs:
+        if 'Df' not in a:
+            a['Df'] = compute_distance(data, a['seq'])
 
     # objective
-    m.setObjective(gp.quicksum(a['Tf'] * X[a['id']] for a in arcs), gp.GRB.MINIMIZE)
+    m.setObjective(gp.quicksum(a['Df'] * X[a['id']] for a in arcs) + theta, gp.GRB.MINIMIZE)
 
     # Flow conservation on all state nodes except depot node
     for n in node_id.values():
@@ -992,34 +1327,42 @@ def build_master_model(data, ef_undom, K_max):
             continue
         m.addConstr(gp.quicksum(X[i] for i in in_arcs[n]) - gp.quicksum(X[i] for i in out_arcs[n]) == 0)
     #
-    # # Depot balance defines vehicle count y
-    m.addConstr(gp.quicksum(X[i] for i in out_arcs[depot_u]) <= K_max)
-    m.addConstr(gp.quicksum(X[i] for i in in_arcs[depot_u]) <= K_max)
+    # Depot balance defines vehicle count y
+    # Changes between <= and == for sweeping across all K
+    if force_exact_K:
+        m.addConstr(gp.quicksum(X[i] for i in out_arcs[depot_u]) == K_max)
+        m.addConstr(gp.quicksum(X[i] for i in in_arcs[depot_u]) == K_max)
+    else:
+        m.addConstr(gp.quicksum(X[i] for i in out_arcs[depot_u]) <= K_max)
+        m.addConstr(gp.quicksum(X[i] for i in in_arcs[depot_u]) <= K_max)
 
     # coverage: each pickup must be served once
     for p in pickups:
         m.addConstr(gp.quicksum(X[i] for i in end_at_pickup[p]) == 1)
 
+    M = max_dist(data)
+
     m.Params.LazyConstraints = 1
     m.Params.Threads = 1
+    m.Params.OutputFlag = 0
 
-    return m, X, arcs, node_id, depot_u, arc_by_id
+    return m, X, arcs, node_id, depot_u, arc_by_id, theta, M
 
 # start callback (hopefully I know what I am doing here)
-def callback(model, where, x_vars, arcs, node_id, depot_u, data):
+def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
     if where != gp.GRB.Callback.MIPSOL:
         return
 
     # Selected arcs
     xsol = model.cbGetSolution(x_vars)
-    chosen = [a_id for a_id, val in xsol.items() if val > 0.5]
-    if not chosen:
+    choose = [a_id for a_id, val in xsol.items() if val > 0.5]
+    if not choose:
         return
 
     # Build successor/predecessor on state nodes
     out_map = {}
     in_map = {}
-    for a_id in chosen:
+    for a_id in choose:
         a = arcs[a_id]
         out_map.setdefault(a['u'], []).append(a_id)
         in_map.setdefault(a['v'], []).append(a_id)
@@ -1036,7 +1379,7 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data):
                 stack.append(v)
 
     # any chosen arc with tail not reachable from depot implies a disconnected cycle or subtour
-    bad_cycle_arcs = [a_id for a_id in chosen if arcs[a_id]['u'] not in seen_nodes]
+    bad_cycle_arcs = [a_id for a_id in choose if arcs[a_id]['u'] not in seen_nodes]
     if bad_cycle_arcs:
         # cut here b/c all arcs in that subtour can be selected together ie. |S| - 1
         model.cbLazy(gp.quicksum(x_vars[a_id] for a_id in bad_cycle_arcs) <= len(bad_cycle_arcs) - 1)
@@ -1057,74 +1400,122 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data):
             route.append(a_id2)
             cur = arcs[a_id2]['v']
             # safety against infinite loops
-            if len(route) > len(chosen) + 5:
+            if len(route) > len(choose) + 5:
                 break
         routes.append(route)
 
-    # Feasibility simulate each route
-    for route in routes:
-        # Build full SID sequence by concatenating arc seqs (avoid duplicating boundary node)
-        sid_seq = []
-        arc_at_pos = []
-        for t, aid in enumerate(route):
-            s = arcs[aid]['seq']
-            if t == 0:
-                sid_seq.extend(list(s))
-                arc_at_pos = [None] + [aid]*(len(s) - 1)
+    sid_to_i = data['sid_to_i']
+    dist_fn = data['dist']
+
+    # We'll compute DP-based feasibility/cost per route and aggregate delta_total across all routes
+    delta_total = 0.0
+
+    # Helper: build skeleton and edge->arc mapping from a route arc list
+    def skeleton_and_cover(route_arc_ids):
+        # Build the skeleton nodes in order (stations removed), and map each skeleton edge to the arc index that covers it
+        cover_arc_index = []  # cover_arc_index[j] = index in route_arc_ids of arc covering edge j: skeleton[j]->skeleton[j+1]
+
+        # Build per-arc skeleton subseqs and then align
+        arc_skel = []
+        for idx, a_idid in enumerate(route_arc_ids):
+            seq = arcs[a_id]['seq']
+            sk = [sid for sid in seq if not is_station(data, sid)]
+            # sk should have at least start/end
+            arc_skel.append((idx, sk))
+
+        # Merge in order, tracking edge coverage by arc index
+        # Start with first arc's skeleton
+        if not arc_skel or not arc_skel[0][1]:
+            return [], []
+
+        skeleton = list(arc_skel[0][1])
+
+        # edges in this first arc are covered by arc index 0
+        for _ in range(len(skeleton) - 1):
+            cover_arc_index.append(arc_skel[0][0])
+
+        # Append subsequent arcs, avoiding duplicate join node
+        for (aidx, sk) in arc_skel[1:]:
+            if not sk:
+                continue
+            if skeleton and sk and skeleton[-1] == sk[0]:
+                # append sk[1:]
+                for sid in sk[1:]:
+                    skeleton.append(sid)
+                for _ in range(len(sk) - 1):
+                    cover_arc_index.append(aidx)
             else:
-                # drop first if repeated
-                if sid_seq and s and sid_seq[-1] == s[0]:
-                    sid_seq.extend(list(s[1:]))
-                    arc_at_pos.extend([aid]*(len(s) - 1))
+                # discontinuity; still append
+                for sid in sk:
+                    skeleton.append(sid)
+                for _ in range(len(sk) - 1):
+                    cover_arc_index.append(aidx)
+
+        return skeleton, cover_arc_index
+
+    # --- process each route ---
+    for route in routes:
+        sid_seq = []
+        for k, aid in enumerate(route):
+            s = arc_by_id[aid]['seq']
+            if k == 0:
+                sid_seq = list(s)
+            else:
+                if sid_seq[-1] == s[0]:
+                    sid_seq.extend(s[1:])
                 else:
-                    sid_seq.extend(list(s))
-                    arc_at_pos.extend([aid]*len(s))
+                    sid_seq.extend(s)
+        skeleton = [sid for sid in sid_seq if not is_station(data, sid)]
+        if len(skeleton) < 2:
+            continue
 
-        # Simulate on node indices using step()
-        sid_to_i = data['sid_to_i']
-        CapE = data['CapE']
+        # Run multi-leg DP: station insertion allowed, objective min distance
+        ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
+            data, skeleton, t0=0.0, E0=data['CapE'],
+            max_station_visits_per_leg=3,
+            max_labels_per_node=50
+        )
 
-        # initial state at depot index 0
-        st = ((0,), 0, frozenset(), CapE, 0.0, frozenset(), frozenset(), frozenset(), 0, 0.0)
-
-        fail_reason = None
-        fail_at = None
-        fail_pos = None
-        fail_arc = None
-
-        # skip the first node (should be depot)
-
-        for pos, sid in enumerate(sid_seq[1:], start=1):
-            j = data['sid_to_i'].get(sid)
-            if j is None:
-                fail_reason = "unknown_sid"
-                fail_at = sid
-                fail_pos = pos
-                fail_arc = arc_at_pos[pos]
-                break
-
-            st2, reason = step(data, st, j)
-            if st2 is None:
-                fail_reason = reason
-                fail_at = sid
-                fail_pos = pos
-                fail_arc = arc_at_pos[pos]
-                break
-
-            st = st2
-
-        # Add a simple prefix cut: forbid selecting all arcs up to the arc where failure occurred.
-        # Find the earliest arc index in the route whose seq contains fail_at.
-        cut_upto = None
-
-        if fail_reason is not None:
-            cut_upto = route.index(fail_arc) if fail_arc in route else len(route) - 1
-            S = route[:cut_upto + 1]
-            model.cbLazy(gp.quicksum(x_vars[aid] for aid in S) <= len(S) - 1)
-
-            print("FAIL", fail_reason, "route arcs", route, "fail_at", fail_at, "fail_arc", fail_arc)
-            print("CUT size", len(S), "S", S)
+        if not ok:
+            # For now: cut the whole route (safe, not minimal).
+            # Once everything is stable, we can tighten to minimal prefix.
+            model.cbLazy(gp.quicksum(x_vars[aid] for aid in route) <= len(route) - 1)
             return
+
+        # # Feasibility cut: minimal prefix up to failing edge fail_i
+            # # fail_i corresponds to skeleton[fail_i] -> skeleton[fail_i+1]
+            # # cover_arc_idx[j] gives arc-index covering edge j
+            # # prefix must include all arcs up to arc-index cover_arc_idx[fail_i]
+            # if fail_i is None or fail_i >= len(cover_arc_idx):
+            #     # fallback: cut whole route
+            #     S_prefix = route
+            # else:
+            #     max_arcpos = cover_arc_idx[fail_i]
+            #     S_prefix = route[:max_arcpos + 1]
+            # model.cbLazy(gp.quicksum(x_vars[aid] for aid in S_prefix) <= len(S_prefix) - 1)
+            # return  # safe to return after adding a feasibility cut
+
+        # Compute optimistic direct distance for skeleton (no stations)
+        direct_dist = 0.0
+        for u_sid, v_sid in zip(skeleton, skeleton[1:]):
+            ui = sid_to_i[u_sid]
+            vi = sid_to_i[v_sid]
+            direct_dist += dist_fn(ui, vi)
+
+        delta = dp_dist - direct_dist
+
+        if DEBUG:
+            print("CALLBACK: delta_total =", delta_total, "choose_arcs =", choose)
+
+        if delta > 1e-6:
+            delta_total += delta
+
+    # --- Optimality cut for whole incumbent ---
+    if delta_total > 1e-6:
+        # Condition on selecting all chosen arcs
+        S = choose
+        model.cbLazy(theta >= delta_total - M*(len(S) - gp.quicksum(x_vars[a] for a in S)))
+
 
 ### some diagnostic functions###
 
@@ -1203,13 +1594,54 @@ def simulate_route(data, sid_seq):
 
     return True, None, None
 
-m, x, arcs, node_id, depot_u,arc_by_id = build_master_model(data, e_frags_undom,K_max=len(data['P']))
+# Sweep through all K values (max K = number of pickups)
 
-def cb(model, where):
-    return callback(model, where, x, arcs, node_id, depot_u, data)
+best_obj = float('inf')
+best_payload = None
 
-t0_solve = perf_counter()
-m.optimize(cb)
+K_upper = len(data['P'])
+
+for K in range(1, K_upper + 1):
+    print(f"\n--- solving with exact K = {K} ---")
+
+    m, x, arcs, node_id, depot_u, arc_by_id, theta, M = build_master_model(
+        data, e_frags_undom, K_max=K, force_exact_K=True
+    )
+
+    m.Params.OutputFlag = 0
+    m.Params.LazyConstraints = 1
+    m.Params.Threads = 1
+
+    def cb(model, where):
+        return callback(model, where, x, arcs, node_id, depot_u, data, theta, M)
+
+    m.optimize(cb)
+
+    if m.SolCount == 0:
+        print(f"K={K}: infeasible")
+        continue
+
+    chosen = [aid for aid, var in x.items() if var.X > 0.5]
+    starts = [aid for aid in chosen if arc_by_id[aid]['Start'] == 'D0']
+
+    print(f"K={K}: obj={m.ObjVal:.6f}, theta={theta.X:.6f}, depot_starts={len(starts)}")
+
+    if m.ObjVal < best_obj:
+        best_obj = m.ObjVal
+        best_payload = {
+            "K": K,
+            "obj": m.ObjVal,
+            "theta": theta.X,
+            "chosen": chosen,
+            "arc_by_id": arc_by_id
+        }
+
+print("\nBEST SOLUTION:")
+print("K =", best_payload["K"])
+print("Obj =", best_payload["obj"])
+print("Theta =", best_payload["theta"])
+
+
 t1_solve = perf_counter()
 
 if m.Status == gp.GRB.INFEASIBLE:
@@ -1232,21 +1664,67 @@ print("Preprocessing time:", pre_time)
 print("Solve time:", sol_time)
 print("Total time:", pre_time + sol_time)
 
-routes = extract_routes_from_solution(chosen, arc_by_id)
-total_dist = 0.0
+
+total_dp = 0.0
+
+print("\n--- DP validation of BEST solution ---")
 
 for r, route in enumerate(routes):
     sid_seq = stitch_sid_sequence(route, arc_by_id)
-    print(f"\nRoute {r}:")
-    print("  arc IDs :", route)
-    print("  SID seq :", sid_seq)
-    ok, fail_sid, reason = simulate_route(data, sid_seq)
-    if ok:
-        print(f"Route {r} is FEASIBLE")
-    else:
-        print(f"Route {r} FAILED at {fail_sid} reason={reason}")
-    d = route_distance_from_sids(data, sid_seq)
-    total_dist += d
-    print(f"Route {r}: distance={d:.2f}  SID seq={sid_seq}")
+    skeleton = [sid for sid in sid_seq if not is_station(data, sid)]
 
-print(f"TOTAL distance travelled: {total_dist:.2f}")
+    ok_dp, dp_dist, dp_path, fail_i = dp_route_min_dist(
+        data,
+        skeleton,
+        t0=0.0,
+        E0=data['CapE'],
+        max_station_visits_per_leg=3,
+        max_labels_per_node=50
+    )
+
+    print(f"\nRoute {r}")
+    print("Skeleton:", skeleton)
+
+    if ok_dp:
+        print("DP realised path:", list(dp_path))
+        print("DP distance:", dp_dist)
+        ok_sim, _, _ = simulate_route(data, list(dp_path))
+        print("Simulate DP path:", ok_sim)
+        total_dp += dp_dist
+    else:
+        print("DP INFEASIBLE at leg", fail_i)
+
+print("\nTOTAL DP distance =", total_dp)
+print("Theta =", best_payload["theta"])
+print("Objective =", best_payload["obj"])
+
+
+
+# # After solve, for each extracted route:
+# sid_seq = stitch_sid_sequence(route, arc_by_id)
+#
+# # Skeleton = remove stations
+# skeleton = [sid for sid in sid_seq if not is_station(data, sid)]
+#
+# ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
+#     data, skeleton,
+#     t0=0.0,
+#     E0=data['CapE'],
+#     max_station_visits_per_leg=2,
+#     max_labels_per_node=50
+# )
+#
+# print("Skeleton:", skeleton)
+# if ok:
+#     print("DP realised path:", list(dp_full_path))
+#     print("DP distance:", dp_dist)
+#
+#     # Optional: now validate the DP path with your existing simulate_route
+#     ok2, fail_sid, reason = simulate_route(data, list(dp_full_path))
+#     print("Simulate DP path:", ok2, fail_sid, reason)
+# else:
+#     print("DP says infeasible at leg", fail_i, ":", skeleton[fail_i], "->", skeleton[fail_i+1])
+#
+# print("theta =", theta.X)
+base_dist = sum(arc_by_id[aid]['Df'] * x[aid].X for aid in x if x[aid].X > 0.5)
+print("base distance =", base_dist, "objective =", m.ObjVal, "base+theta =", base_dist + theta.X)
