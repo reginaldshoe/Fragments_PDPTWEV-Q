@@ -468,24 +468,48 @@ def solve_route(
     if E0 is None:
         E0 = inst.battery_capacity
 
-    # Validate skeleton: no stations, no repeated customer nodes
+    # Validate skeleton: no stations allowed (caller error — always raise)
     for sid in skeleton:
         if inst.node(sid).is_station:
             raise ValueError(
                 f"Skeleton must not contain stations; found '{sid}'. "
                 "Filter stations from the sequence before calling solve_route()."
             )
+
+    # Repeated customer nodes mean the incumbent route visits a customer twice.
+    # This is structurally infeasible.  Return a DPResult(feasible=False) rather
+    # than raising, so the callback can add a lazy cut.  Raising here would be
+    # silently swallowed by Gurobi's callback mechanism, causing the incumbent
+    # to be accepted without any cut being added.
     customer_visits = [s for s in skeleton if inst.node(s).is_customer]
     if len(customer_visits) != len(set(customer_visits)):
-        seen, dups = set(), []
-        for s in customer_visits:
-            if s in seen and s not in dups:
-                dups.append(s)
-            seen.add(s)
-        raise ValueError(
-            f"Skeleton contains repeated customer nodes {dups} in {list(skeleton)}. "
-            "This indicates a bug in arc stitching or route extraction."
+        direct_distance = sum(
+            inst.distance(inst.idx(u), inst.idx(v))
+            for u, v in zip(skeleton, skeleton[1:])
         )
+        result = DPResult(
+            feasible        = False,
+            total_distance  = None,
+            realised_path   = None,
+            fail_leg        = 0,
+            direct_distance = direct_distance,
+            station_detour  = 0.0,
+        )
+        if stats is not None:
+            record = DPCallRecord(
+                skeleton          = skeleton,
+                feasible          = False,
+                direct_distance   = direct_distance,
+                realised_distance = None,
+                station_detour    = 0.0,
+                legs_solved       = 0,
+                labels_generated  = 0,
+                labels_kept       = 0,
+                station_visits    = 0,
+                fail_leg          = 0,
+            )
+            stats._record_call(result, record)
+        return result
 
     # Compute direct distance (MILP's optimistic cost)
     direct_distance = sum(
@@ -608,8 +632,40 @@ def solve_route(
         labels[v_id] = L_v
 
     # --- Extract best label at the final skeleton node ---
-    final_id    = skeleton[-1]
+    final_id     = skeleton[-1]
     final_labels = labels.get(final_id, [])
+
+    # Guard: if no labels reached the final node (all pruned by dominance or
+    # label cap), the route is infeasible at the last leg.
+    if not final_labels:
+        last_leg_idx = len(skeleton) - 2
+        result = DPResult(
+            feasible        = False,
+            total_distance  = None,
+            realised_path   = None,
+            fail_leg        = last_leg_idx,
+            direct_distance = direct_distance,
+            station_detour  = 0.0,
+        )
+        if stats is not None:
+            record = DPCallRecord(
+                skeleton          = skeleton,
+                feasible          = False,
+                direct_distance   = direct_distance,
+                realised_distance = None,
+                station_detour    = 0.0,
+                legs_solved       = call_legs_solved,
+                labels_generated  = call_labels_generated,
+                labels_kept       = call_labels_kept,
+                station_visits    = call_station_visits,
+                fail_leg          = last_leg_idx,
+            )
+            stats.total_legs_solved      += call_legs_solved
+            stats.total_labels_generated += call_labels_generated
+            stats.total_labels_kept      += call_labels_kept
+            stats.total_station_visits   += call_station_visits
+            stats._record_call(result, record)
+        return result
 
     best = min(
         final_labels,
