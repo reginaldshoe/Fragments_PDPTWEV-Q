@@ -310,29 +310,18 @@ def make_callback(
             if len(skeleton) < 2:
                 continue
 
-            try:
-                result: DPResult = solve_route(
-                    inst,
-                    skeleton,
-                    t0=0.0,
-                    E0=inst.battery_capacity,
-                    max_station_visits_per_leg=3,
-                    max_labels_per_node=50,
-                    stats=dp_stats,
-                )
-            except ValueError:
-                # Skeleton contains repeated customer nodes — the incumbent
-                # route is structurally infeasible (a customer visited twice).
-                # Add a feasibility cut to forbid this arc combination.
-                model.cbLazy(
-                    gp.quicksum(x_vars[arc_id] for arc_id in route)
-                    <= len(route) - 1
-                )
-                dp_stats.feasibility_cuts_added += 1
-                return
+            result: DPResult = solve_route(
+                inst,
+                skeleton,
+                t0=0.0,
+                E0=inst.battery_capacity,
+                max_station_visits_per_leg=3,
+                max_labels_per_node=50,
+                stats=dp_stats,
+            )
 
             if not result.feasible:
-                # Energy/time infeasibility cut: forbid this arc combination.
+                # Feasibility cut: route is energy/time/structurally infeasible.
                 model.cbLazy(
                     gp.quicksum(x_vars[arc_id] for arc_id in route)
                     <= len(route) - 1
