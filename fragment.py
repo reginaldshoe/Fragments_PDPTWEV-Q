@@ -246,6 +246,21 @@ def attach_fragment_metrics(
     *exclude_last* should be True for extended fragments (the final pickup is
     excluded from customer_locations so the dominance key correctly reflects
     that this pickup belongs to the next fragment in the chain).
+
+    Dominance key
+    -------------
+    The dominance key is:
+        (start_node, end_node, start_onboard, end_onboard, customer_locations)
+
+    customer_locations is the frozenset of all customer nodes visited
+    *interior* to the fragment (i.e. not the final node when exclude_last=True,
+    and not the start node since that is already captured by start_node).
+
+    Critically, interior customer visits must be part of the dom_key so that
+    only fragments with identical interior visits are compared for dominance.
+    Two EFs that visit different interior customers can never substitute for
+    one another in a route — allowing one to dominate the other would permit
+    the solver to chain arcs that revisit the same customer.
     """
     result = []
     for f in fragments:
@@ -257,7 +272,7 @@ def attach_fragment_metrics(
             f.sequence[-1],
             f.start_onboard,
             f.end_onboard,
-            cust_locs,
+            cust_locs,          # includes ALL interior customer visits
         )
         result.append(Fragment(
             sequence          = f.sequence,
