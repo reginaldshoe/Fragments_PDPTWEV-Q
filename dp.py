@@ -468,13 +468,24 @@ def solve_route(
     if E0 is None:
         E0 = inst.battery_capacity
 
-    # Validate skeleton
+    # Validate skeleton: no stations, no repeated customer nodes
     for sid in skeleton:
         if inst.node(sid).is_station:
             raise ValueError(
                 f"Skeleton must not contain stations; found '{sid}'. "
                 "Filter stations from the sequence before calling solve_route()."
             )
+    customer_visits = [s for s in skeleton if inst.node(s).is_customer]
+    if len(customer_visits) != len(set(customer_visits)):
+        seen, dups = set(), []
+        for s in customer_visits:
+            if s in seen and s not in dups:
+                dups.append(s)
+            seen.add(s)
+        raise ValueError(
+            f"Skeleton contains repeated customer nodes {dups} in {list(skeleton)}. "
+            "This indicates a bug in arc stitching or route extraction."
+        )
 
     # Compute direct distance (MILP's optimistic cost)
     direct_distance = sum(
