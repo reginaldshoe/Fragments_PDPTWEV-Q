@@ -21,6 +21,16 @@ import heapq
 path = Path.cwd() / "instances"
 
 DEBUG = False
+DEBUG_CALLBACK = False
+DEBUG_DIAGNOSTICS = False
+
+FORCE_CHAIN = False
+RUN_OPTIONA = True
+DIAG_SKELETON = False
+
+DP_MAX_STATION_VISITS_PER_LEG = 6
+DP_MAX_LABELS_PER_NODE = 500
+
 
 # Used Copilot to develop read_instance block, needed some editing
 def read_instance(path):
@@ -251,6 +261,10 @@ def best_station_between(data, a_sid, b_sid):
 
     return best
 
+def strip_stations(seq, data):
+    return [sid for sid in seq if not is_station(data, sid)]
+
+
 # Dominance + metadata helpers
 
 # customer locations (excludes stations)
@@ -410,6 +424,14 @@ def dominance_filter(items):
         out.extend(filter_by_key(group))
     return out
 
+
+def print_dp_path_structure(tag, data, dp_path, dp_dist):
+    stations = [sid for sid in dp_path if is_station(data, sid)]
+    print(f"[{tag}] DP distance = {dp_dist:.6f}")
+    print(f"[{tag}] DP path = {list(dp_path)}")
+    print(f"[{tag}] Stations used ({len(stations)}): {stations}")
+
+
 # /end helpers
 # step update (analogous to Algo 1: Appendix B of Rist/Forbes), extend existing path to node j
 # Original paper only tracked time, load and distance
@@ -440,8 +462,8 @@ def step(data, state, j):
     dist2 = total_dist
 
     # avoid revisiting same station
-    if is_station(data, sid_j) and sid_j in seenS:
-        return None, 'revisit_station'
+    # if is_station(data, sid_j) and sid_j in seenS:
+    #     return None, 'revisit_station'
 
     # time feasibility
     t_arr = t_depart + traveltime(i, j)
@@ -699,6 +721,33 @@ def enumerate_fragments(data, base_paths):
         frags.extend(trim_base_path(data, bp))
     return frags
 
+def compute_onboard_states(seq, start_onboard, data):
+    nodes = data['nodes']
+    p2d = data['p2d']
+    d2p = data['d2p']
+
+    # identify pickups
+    pickup_nodes = {nodes[i][0] for i in data['P']}
+
+    load = set(start_onboard)
+    start_on = load.copy()
+
+    for sid in seq:
+        if sid in pickup_nodes:
+            load.add(sid)
+        elif sid in d2p:
+            # SAFE REMOVE (important)
+            if d2p[sid] in load:
+                load.remove(d2p[sid])
+            else:
+                # this can happen if fragment starts mid-route
+                # → skip instead of crashing
+                pass
+
+    end_on = load.copy()
+
+    return frozenset(start_on), frozenset(end_on)
+
 # extend fragments to new pickup i, and attach/update metadata
 def extend_all_fragments(data, frags):
 
@@ -713,8 +762,7 @@ def extend_all_fragments(data, frags):
 
     for f in frags:
         seq = f['seq']
-        start_on = set(f['start_onboard'])
-        end_on = set(f['end_onboard'])
+        start_on, end_on = compute_onboard_states(seq, f['start_onboard'],data)
 
         # visited customers + stations from sequence
         visited = set(seq)
@@ -796,6 +844,139 @@ def extend_all_fragments(data, frags):
 
     return out
 
+
+def augment_states(data, frags):
+    pickup_nodes = {data['nodes'][i][0] for i in data['P']}
+    d2p = data['d2p']
+
+    out = []
+
+    for f in frags:
+        seq = f['seq']
+        out.append(f)
+
+        # minimal required state
+        start_min = f['start_onboard']
+
+        # pickups delivered inside fragment
+        delivered = {d2p[sid] for sid in seq if sid in d2p}
+
+        # pickups appearing in fragment
+        in_seq = {sid for sid in seq if sid in pickup_nodes}
+
+        # only allow carryover that is NOT:
+        # - delivered inside fragment
+        # - appearing later in fragment
+        carry_candidates = pickup_nodes - delivered - in_seq
+
+        # controlled expansion (1 extra passenger)
+        for p in carry_candidates:
+            start_on = start_min | {p}
+
+            # recompute end_on
+            load = set(start_on)
+            for sid in seq[1:]:
+                if sid in pickup_nodes:
+                    load.add(sid)
+                elif sid in d2p:
+                    if d2p[sid] in load:
+                        load.remove(d2p[sid])
+
+            new_f = dict(f)
+            new_f['start_onboard'] = frozenset(start_on)
+            new_f['end_onboard'] = frozenset(load)
+
+            out.append(new_f)
+
+    return out
+
+def compute_min_start_onboard(seq, data):
+    pickup_nodes = {data['nodes'][i][0] for i in data['P']}
+    d2p = data['d2p']
+
+    load = set()
+    required = set()
+    allowed = set() # pickups seen so far
+
+    for sid in seq:
+        if sid in pickup_nodes:
+            # ✅ MUST be onboard when visiting pickup
+            required.add(sid)
+            load.add(sid)
+            allowed.add(sid)
+        elif sid in d2p:
+            p = d2p[sid]
+
+            if p not in load:
+                required.add(p)
+            else:
+                load.remove(p)
+
+    required = {p for p in required if p in allowed}
+    return frozenset(required)
+
+def extract_subarcs(data, frags):
+    nodes = data['nodes']
+    sid_to_i = data['sid_to_i']
+    P = data['P']
+
+    # pickup nodes (cp)
+    pickup_nodes = {nodes[i][0] for i in P}
+
+    new_arcs = []
+
+    for f in frags:
+        seq = list(f['seq'])
+        for i in range(len(seq)):
+            for j in range(i + 1, len(seq)):
+                sub_seq = seq[i:j + 1]
+
+                if len(sub_seq) < 2:
+                    continue
+
+                start_on = compute_min_start_onboard(sub_seq, data)
+
+                load = set(start_on)
+                for sid in sub_seq[1:]:
+                    if sid in pickup_nodes:
+                        load.add(sid)
+                    elif sid in data['d2p']:
+                        if data['d2p'][sid] in load:
+                            load.remove(data['d2p'][sid])
+
+                end_on = frozenset(load)
+
+                T, E, L = compute_T_E_L(data, sub_seq)
+
+                new_arcs.append({
+                    'seq': tuple(sub_seq),
+                    'Start': sub_seq[0],
+                    'End': sub_seq[-1],
+                    'start_onboard': start_on,
+                    'end_onboard': end_on,
+                    'contains_charge': f['contains_charge'],
+                    'min_start_energy': compute_Emin(data, sub_seq),
+                    'Tf': float(T),
+                    'Ef': float(E),
+                    'Lf': float(L),
+                    'Df': compute_distance(data, sub_seq),
+                })
+
+    return new_arcs
+
+
+def deduplicate_arcs(arcs):
+    seen = set()
+    out = []
+
+    for f in arcs:
+        key = (f['seq'], f['start_onboard'], f['end_onboard'])
+        if key not in seen:
+            seen.add(key)
+            out.append(f)
+
+    return out
+
 # stats helper functions to test fragment output
 
 def stats_frags(frags):
@@ -831,10 +1012,12 @@ def stats_ext(efrags):
     return out
 
 # enumerate fragments and stats
-instance = 'c101C6.txt'
+instance = 'c104C10.txt'
 data = read_instance(path / instance)
 
 t0_preprocess = perf_counter() #time on
+
+print("INSTANCE:", instance, "horizon=", data['horizon'], "stations=", len(data['S']), "pickups=", len(data['P']))
 
 #base paths
 base, pruned = enumerate_base_paths(data, 18)
@@ -845,6 +1028,7 @@ r_frags_dedup = dedup_exact(frags)
 r_frags_meta = attach_metadata(data, r_frags_dedup, exclude_last_ef = False)
 r_frags_undom = dominance_filter(r_frags_meta)
 r_frags_undom = dedup_by_signature(r_frags_undom)
+r_frags_undom = augment_states(data, r_frags_undom)
 
 #extended fragments
 e_frags = extend_all_fragments(data, r_frags_undom)
@@ -853,6 +1037,10 @@ e_frags_meta = attach_metadata(data, e_frags_dedup, exclude_last_ef = True)
 e_frags_undom = dominance_filter(e_frags_meta)
 e_frags_undom = dedup_by_signature(e_frags_undom)
 
+e_frags_aug = deduplicate_arcs(e_frags_undom)
+# e_frags_aug = deduplicate_arcs(e_frags_undom + extract_subarcs(data,e_frags_undom))
+
+print("Num arcs:", len(e_frags_aug))
 
 t1_preprocess = perf_counter() #time off
 
@@ -1078,8 +1266,8 @@ def dp_leg_frontier_charge_to_full(data, u_sid, v_sid, t0, E0, max_station_visit
 
 
 def dp_route_min_dist(data, skeleton_sids, t0=0.0, E0=None,
-                      max_station_visits_per_leg=3,
-                      max_labels_per_node=50):
+                  max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+                  max_labels_per_node=DP_MAX_LABELS_PER_NODE):
     """
     Multi-leg DP over mandatory skeleton nodes (no stations in skeleton_sids).
     Returns:
@@ -1174,6 +1362,7 @@ def make_gurobi_env():
     # return default env if there is no licence
     return gp.Env()
 
+# is 208 even doable for instance c101C6? and for K=1 vehicles?
 if DEBUG:
     def brute_force_best_k1(data):
         # operations are customer nodes C* that are pickups/deliveries
@@ -1222,7 +1411,9 @@ if DEBUG:
                 # evaluate via DP
                 skeleton = ['D0'] + seq + ['D0']
                 ok, dp_dist, dp_path, fail_i = dp_route_min_dist(data, skeleton, t0=0.0, E0=data['CapE'],
-                                                                max_station_visits_per_leg=3, max_labels_per_node=200)
+                                                    max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+                                                    max_labels_per_node=DP_MAX_LABELS_PER_NODE)
+
                 if ok:
                     if best is None or dp_dist < best:
                         best = dp_dist
@@ -1256,6 +1447,13 @@ if DEBUG:
     print("BRUTE FORCE best skeleton =", best_skeleton)
 
 
+
+##############################
+####### model build ##########
+##############################
+##############################
+
+
 def build_master_model(data, ef_undom, K_max, force_exact_K = False):
 
     # add start arcs to existing frags
@@ -1284,16 +1482,19 @@ def build_master_model(data, ef_undom, K_max, force_exact_K = False):
     # Pickup list by sid
     pickups = [data['nodes'][i][0] for i in data['P']]
 
+    arc_visits_pickups = {}  # aid -> set of pickup SIDs visited by this arc
+
+    for a in arcs:
+        s = strip_stations(a['seq'],data)
+        # exclude the first node to avoid boundary double-counting across consecutive arcs
+        visited = set(s[1:])
+        arc_visits_pickups[a['id']] = {sid for sid in visited if sid in pickups}
+
     # Map pickup sid -> arc ids that end at that pickup (across any onboard)
     end_at_pickup = {p: [] for p in pickups}
     for a in arcs:
         if a['End'] in end_at_pickup:
             end_at_pickup[a['End']].append(a['id'])
-
-    # diagnose
-    if DEBUG:
-        for p, arcs_p in end_at_pickup.items():
-            print(p, len(arcs_p))
 
     arc_by_id = {a['id']: a for a in arcs}
 
@@ -1303,9 +1504,6 @@ def build_master_model(data, ef_undom, K_max, force_exact_K = False):
             v = arc_by_id[aid]['v']
             if len(out_arcs[v]) > 0:
                 good += 1
-        # diagnose
-        if DEBUG:
-            print(p, "coverage arcs:", len(end_at_pickup[p]), "good (non-deadend):", good)
 
     # Create model (w/ licence)
     env = make_gurobi_env()
@@ -1338,7 +1536,8 @@ def build_master_model(data, ef_undom, K_max, force_exact_K = False):
 
     # coverage: each pickup must be served once
     for p in pickups:
-        m.addConstr(gp.quicksum(X[i] for i in end_at_pickup[p]) == 1)
+        m.addConstr(
+            gp.quicksum(X[aid] for aid in arc_visits_pickups if p in arc_visits_pickups[aid]) == 1)
 
     M = max_dist(data)
 
@@ -1347,6 +1546,462 @@ def build_master_model(data, ef_undom, K_max, force_exact_K = False):
     m.Params.OutputFlag = 0
 
     return m, X, arcs, node_id, depot_u, arc_by_id, theta, M
+
+# is 362 even feasible for instance c104C10?
+
+if RUN_OPTIONA:
+    import random
+
+    def random_feasible_skeletons(data, n_samples=5000, seed=1):
+        random.seed(seed)
+
+        nodes = data['nodes']
+        CapL = data['CapL']
+        demand = {nodes[i][0]: nodes[i][5] for i in range(len(nodes))}
+
+        pickups = [nodes[i][0] for i in data['P']]
+        deliveries = [nodes[i][0] for i in data['D']]
+        p2d = data['p2d']
+        d2p = data['d2p']
+
+        all_ops = pickups + deliveries
+
+        def is_valid(seq):
+            seen = set()
+            load = 0.0
+            for sid in seq:
+                # precedence
+                if sid in deliveries and d2p[sid] not in seen:
+                    return False
+                load += demand[sid]
+                if load < -1e-9 or load > CapL + 1e-9:
+                    return False
+                seen.add(sid)
+            return abs(load) < 1e-6
+
+        skels = []
+        for _ in range(n_samples):
+            perm = []
+            available_p = pickups.copy()
+            available_d = []
+
+            load = 0.0
+            while available_p or available_d:
+                choices = []
+                for p in available_p:
+                    if load + demand[p] <= CapL + 1e-9:
+                        choices.append(p)
+                for d in available_d:
+                    if load + demand[d] >= -1e-9:
+                        choices.append(d)
+
+                if not choices:
+                    break
+
+                sid = random.choice(choices)
+                perm.append(sid)
+                load += demand[sid]
+
+                if sid in available_p:
+                    available_p.remove(sid)
+                    available_d.append(p2d[sid])
+                else:
+                    available_d.remove(sid)
+
+            if len(perm) == len(all_ops) and is_valid(perm):
+                skels.append(['D0'] + perm + ['D0'])
+
+        return skels
+
+
+    best = float('inf')
+    best_skel = None
+
+    skels = random_feasible_skeletons(data, n_samples=8000, seed=1)
+
+    for skel in skels:
+        ok, dp_dist, _, _ = dp_route_min_dist(
+            data,
+            skel,
+            t0=0.0,
+            E0=data['CapE'],
+            max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+            max_labels_per_node=DP_MAX_LABELS_PER_NODE
+
+        )
+        if ok and dp_dist < best:
+            best = dp_dist
+            best_skel = skel
+
+    print_dp_path_structure("OPTION-A", data, best_skel, best)
+
+
+if DEBUG_DIAGNOSTICS:
+    m_tmp, x_tmp, arcs_full, node_id_tmp, depot_u_tmp, arc_by_id_full, theta_tmp, M_tmp = build_master_model(
+        data, e_frags_aug, K_max=1, force_exact_K=True
+    )
+
+    def coverage_report_for_skeleton(skeleton, arcs_full, data):
+        """
+        For each consecutive (u, v) in the skeleton,
+        report how many EF fragments can realise u->v consecutively
+        in their station-stripped sequence.
+        """
+        print("\n=== COVERAGE REPORT ===")
+        print("Skeleton:", skeleton)
+
+        stripped_ef_seqs = [
+            strip_stations(f['seq'], data)
+            for f in arcs_full
+        ]
+
+        for u, v in zip(skeleton, skeleton[1:]):
+            count = 0
+            examples = []
+
+            for seq in stripped_ef_seqs:
+                for i in range(len(seq) - 1):
+                    if seq[i] == u and seq[i + 1] == v:
+                        count += 1
+                        if len(examples) < 3:
+                            examples.append(seq)
+
+            print(f"\nLink {u} -> {v}:")
+            print(f"  Supported by {count} EF(s)")
+            if examples:
+                print("  Example stripped EF seqs:")
+                for ex in examples:
+                    print("    ", ex)
+            else:
+                print("  *** NO EF SUPPORT ***")
+
+
+    debug_skeleton = best_skel
+    coverage_report_for_skeleton(debug_skeleton, e_frags_undom, data)
+
+
+    def segmentation_coverage_report(target_skeleton, arcs_full, data, max_examples=5):
+        """
+        Determine whether target_skeleton can be represented as a concatenation
+        of station-stripped arc sequences in arcs_full.
+        """
+        target = target_skeleton
+        n = len(target)
+
+        # Precompute each arc's stripped seq
+        arc_stripped = {}
+        for a in arcs_full:
+            sid_seq = a['seq']
+            stripped = strip_stations(sid_seq, data)
+            arc_stripped[a['id']] = stripped
+
+        # For each position i in target, find arcs whose stripped seq matches target[i:i+len(seq)]
+        matches_from = [[] for _ in range(n)]
+        for aid, seq in arc_stripped.items():
+            L = len(seq)
+            if L < 2:
+                continue
+            for i in range(n - L + 1):
+                if target[i:i+L] == seq:
+                    matches_from[i].append(aid)
+
+        # DP to find any segmentation
+        prev = [None] * (n + 1)   # prev[pos] = (prev_pos, arc_id)
+        prev[0] = (-1, None)
+
+        for i in range(n):
+            if prev[i] is None:
+                continue
+            for aid in matches_from[i]:
+                L = len(arc_stripped[aid])
+                j = i + L
+                if prev[j] is None:
+                    prev[j] = (i, aid)
+
+        feasible = prev[n] is not None
+        print("\n=== SEGMENTATION COVERAGE REPORT ===")
+        print("Target skeleton:", target)
+        print("Feasible segmentation:", feasible)
+
+        # Print useful diagnostics
+        for i in range(n - 1):
+            print(f"pos {i}: {target[i]} -> {target[i+1]}  | candidate arcs starting here: {len(matches_from[i])}")
+
+        if not feasible:
+            # show first unreachable position
+            first_bad = next((i for i in range(n+1) if prev[i] is None), None)
+            print("First unreachable prefix length:", first_bad)
+            return False, None
+
+        # Reconstruct one segmentation
+        seg = []
+        pos = n
+        while pos != 0:
+            i, aid = prev[pos]
+            seg.append(aid)
+            pos = i
+        seg.reverse()
+
+        print("\nOne segmentation (arc IDs):", seg)
+        print("Segment sequences:")
+        for aid in seg[:max_examples]:
+            print("  ", aid, arc_stripped[aid])
+
+        return True, seg
+
+
+    debug_skeleton = best_skel
+    segmentation_coverage_report(debug_skeleton, arcs_full, data)
+
+
+    def near_miss_report(target_skeleton, arcs_full, data, focus_pos):
+        """
+        focus_pos is the index i such that we care about target[i] -> target[i+1]
+        """
+        u = target_skeleton[focus_pos]
+        v = target_skeleton[focus_pos + 1]
+
+        print(f"\n=== NEAR MISS at pos {focus_pos}: {u} -> {v} ===")
+
+        def strip(seq):
+            return [sid for sid in seq if not is_station(data, sid)]
+
+        # 1) arcs whose stripped seq STARTS at u
+        starts_at_u = []
+        for a in arcs_full:
+            s = strip(a['seq'])
+            if len(s) >= 2 and s[0] == u:
+                starts_at_u.append((a['id'], s[:10]))
+
+        print(f"Arcs starting at {u}: {len(starts_at_u)}")
+        for aid, s in starts_at_u[:10]:
+            print("  ", aid, s)
+
+        # 2) arcs whose stripped seq contains u->v internally
+        contains_uv = []
+        for a in arcs_full:
+            s = strip(a['seq'])
+            for i in range(len(s) - 1):
+                if s[i] == u and s[i + 1] == v:
+                    contains_uv.append((a['id'], s[max(0, i-3): i+4], s[0]))
+                    break
+
+        print(f"Arcs containing {u}->{v} internally: {len(contains_uv)}")
+        for aid, window, start in contains_uv[:10]:
+            print("  ", aid, "start=", start, "window=", window)
+
+
+    target = debug_skeleton
+    for pos in [2,3,7,10,11]:  # the zeros
+        near_miss_report(target, arcs_full, data, pos)
+
+
+    def is_boundary_node(data, sid):
+        return (sid == 'D0') or is_pickup(data, sid)
+
+    def segmentation_report_pickup_boundaries(target_skeleton, arcs_full, data):
+        """
+        Can we tile the full operation skeleton using arcs, if we only allow
+        segment boundaries at depot + pickup nodes (not deliveries)?
+        """
+        target = target_skeleton
+        n = len(target)
+
+        # boundary positions in the skeleton where a segment is allowed to START/END
+        boundary_pos = [i for i,sid in enumerate(target) if is_boundary_node(data, sid)]
+        boundary_set = set(boundary_pos)
+
+        def strip(seq):
+            return [sid for sid in seq if not is_station(data, sid)]
+
+        # Precompute stripped seq for each arc
+        arc_stripped = {}
+        for a in arcs_full:
+            arc_stripped[a['id']] = strip(a['seq'])
+
+        # matches_from[i] = list of arc IDs whose stripped seq matches target[i:i+L]
+        # AND i is a boundary start AND i+L-1 is a boundary end
+        matches_from = [[] for _ in range(n)]
+        for aid, seq in arc_stripped.items():
+            L = len(seq)
+            if L < 2:
+                continue
+            for i in range(n - L + 1):
+                j = i + L - 1
+                if i in boundary_set and j in boundary_set and target[i:i+L] == seq:
+                    matches_from[i].append(aid)
+
+        # DP over boundary positions
+        prev = [None] * n
+        prev[0] = (-1, None)  # start at position 0 (D0)
+
+        for i in range(n):
+            if prev[i] is None:
+                continue
+            for aid in matches_from[i]:
+                L = len(arc_stripped[aid])
+                j = i + L - 1
+                if prev[j] is None:
+                    prev[j] = (i, aid)
+
+        feasible = prev[n-1] is not None
+
+        print("\n=== PICKUP-BOUNDARY SEGMENTATION REPORT ===")
+        print("Target skeleton:", target)
+        print("Boundary positions:", boundary_pos)
+        print("Feasible segmentation:", feasible)
+
+        # Show candidate counts only at boundary starts (more meaningful)
+        for i in boundary_pos[:-1]:
+            print(f"start at pos {i} ({target[i]}): {len(matches_from[i])} candidate arc(s)")
+
+        if not feasible:
+            # Find the furthest reachable boundary
+            reachable = [i for i in boundary_pos if prev[i] is not None]
+            print("Reachable boundary positions:", reachable)
+            print("Furthest reachable boundary:", max(reachable) if reachable else None)
+            return False, None
+
+        # Reconstruct segmentation
+        seg = []
+        pos = n - 1
+        while pos != 0:
+            i, aid = prev[pos]
+            seg.append(aid)
+            pos = i
+        seg.reverse()
+
+        print("One segmentation (arc IDs):", seg)
+        print("Segment stripped sequences:")
+        for aid in seg:
+            print("  ", aid, arc_stripped[aid])
+
+        return True, seg
+
+
+
+    target = best_skel
+    segmentation_report_pickup_boundaries(target, arcs_full, data)
+
+    _ , segmentation_ids = segmentation_report_pickup_boundaries(target, arcs_full, data)
+
+    def state_compatible_segmentation(target_skeleton, arcs_full, data):
+        """
+        Find a chain of arcs that:
+          (i) has station-stripped sequences that concatenate to target_skeleton, with boundaries at depot+pickups
+          (ii) is composable in the master state graph (arc.v == next_arc.u)
+        """
+        target = target_skeleton
+        n = len(target)
+
+        def strip(seq):
+            return [sid for sid in seq if not is_station(data, sid)]
+
+        def is_boundary(sid):
+            return (sid == 'D0') or is_pickup(data, sid)
+
+        boundary_pos = [i for i, sid in enumerate(target) if is_boundary(sid)]
+        boundary_set = set(boundary_pos)
+
+        # Precompute stripped seq for each arc
+        arc_stripped = {a['id']: strip(a['seq']) for a in arcs_full}
+        arc_by_id = {a['id']: a for a in arcs_full}
+
+        # Build candidate arcs for each boundary start i: arcs whose stripped seq equals target[i:i+L]
+        candidates_from = {i: [] for i in boundary_pos}
+        for aid, seq in arc_stripped.items():
+            L = len(seq)
+            if L < 2:
+                continue
+            for i in boundary_pos:
+                j = i + L - 1
+                if j >= n:
+                    continue
+                if j in boundary_set and target[i:i+L] == seq:
+                    candidates_from[i].append(aid)
+
+        # DP over boundary positions with state compatibility
+        # dp[pos][state_node] = (prev_pos, prev_state_node, arc_id)
+        dp = {}
+        start_pos = boundary_pos[0]  # should be 0
+        initial_state = frozenset()
+        dp[(start_pos, initial_state)] = [(-1, None, None)]  # None means "start of route"
+
+        for i in boundary_pos[:-1]:
+            # collect all entries at this boundary position
+            current_entries = [(key, val) for key, val in dp.items() if key[0] == i]
+            if not current_entries:
+                continue
+
+            for (pos, last_state), _ in current_entries:
+                for aid in candidates_from[i]:
+                    a = arc_by_id[aid]
+                    end_pos = i + len(arc_stripped[aid]) - 1
+                    end_state = a['v']
+                    start_state = a['u']
+
+                    # state compatibility:
+                    # - if this is the first segment in the route, accept it
+                    # - else require last_state == start_state
+
+                    if last_state != start_state:
+                        continue
+
+                    key2 = (end_pos, end_state)
+
+                    if key2 not in dp:
+                        dp[key2] = []
+                    dp[key2].append((pos, last_state, aid))
+
+        final_pos = boundary_pos[-1]  # should be n-1
+        # accept any end_state at final_pos
+        finals = [(key, dp[key]) for key in dp if key[0] == final_pos]
+        feasible = len(finals) > 0
+
+        print("\n=== STATE-COMPATIBLE SEGMENTATION REPORT ===")
+        print("Target skeleton:", target)
+        print("Boundary positions:", boundary_pos)
+        print("Feasible:", feasible)
+
+        if not feasible:
+            # show where it dies
+            reachable = sorted(set(pos for (pos, _) in dp.keys()))
+            print("Reachable boundary positions:", [p for p in boundary_pos if p in reachable])
+            # also show candidate counts at each boundary
+            for i in boundary_pos[:-1]:
+                print(f"start at pos {i} ({target[i]}): {len(candidates_from[i])} candidates")
+            return False, None
+
+        # reconstruct one solution
+        # pick any final
+        (final_key, _) = finals[0]
+        pos, state = final_key
+        seg = []
+        while True:
+            prev_pos, prev_state, aid = dp[(pos, state)][0]
+            if aid is None:
+                break
+            seg.append(aid)
+            # move backwards: previous segment ended at prev_pos with prev_state
+            # but prev_state is the "last_state" before taking aid; we need the state at prev_pos
+            # We can recover it by scanning dp keys; easiest is to set it explicitly:
+            # Here we use the start_state of the chosen arc as the predecessor state
+            a = arc_by_id[aid]
+            state = a['u'] if prev_state is not None else None
+            pos = prev_pos
+
+        seg.reverse()
+        print("Arc chain (IDs):", seg)
+        print("Arc stripped sequences:")
+        for aid in seg:
+            print("  ", aid, arc_stripped[aid], "u=", arc_by_id[aid]['u'], "v=", arc_by_id[aid]['v'])
+        return True, seg
+
+
+
+    target = best_skel
+    state_compatible_segmentation(target, arcs_full, data)
+
 
 # start callback (hopefully I know what I am doing here)
 def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
@@ -1472,9 +2127,15 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
         # Run multi-leg DP: station insertion allowed, objective min distance
         ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
             data, skeleton, t0=0.0, E0=data['CapE'],
-            max_station_visits_per_leg=3,
-            max_labels_per_node=50
+            max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+            max_labels_per_node=DP_MAX_LABELS_PER_NODE
         )
+
+        if DEBUG_CALLBACK:
+            print("DP path:", dp_full_path)
+            print("DP distance:", dp_dist)
+            print("Stations used:", [s for s in dp_full_path if is_station(data, s)])
+            print("Num stations:", sum(is_station(data, s) for s in dp_full_path))
 
         if not ok:
             # For now: cut the whole route (safe, not minimal).
@@ -1496,13 +2157,21 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
             # return  # safe to return after adding a feasibility cut
 
         # Compute optimistic direct distance for skeleton (no stations)
-        direct_dist = 0.0
-        for u_sid, v_sid in zip(skeleton, skeleton[1:]):
-            ui = sid_to_i[u_sid]
-            vi = sid_to_i[v_sid]
-            direct_dist += dist_fn(ui, vi)
+        # direct_dist = 0.0
+        # for u_sid, v_sid in zip(skeleton, skeleton[1:]):
+        #     ui = sid_to_i[u_sid]
+        #     vi = sid_to_i[v_sid]
+        #     direct_dist += dist_fn(ui, vi)
+        #
+        # delta = dp_dist - direct_dist
 
-        delta = dp_dist - direct_dist
+        # Base cost consistent with master objective: sum of Df of chosen arcs on this route
+        base_route_cost = 0.0
+        for aid in route:
+            base_route_cost += arcs[aid]['Df']
+
+        delta = dp_dist - base_route_cost
+
 
         if DEBUG:
             print("CALLBACK: delta_total =", delta_total, "choose_arcs =", choose)
@@ -1606,7 +2275,7 @@ for K in range(1, K_upper + 1):
     print(f"\n--- solving with exact K = {K} ---")
 
     m, x, arcs, node_id, depot_u, arc_by_id, theta, M = build_master_model(
-        data, e_frags_undom, K_max=K, force_exact_K=True)
+        data, e_frags_aug, K_max=K, force_exact_K=True)
 
     def cb(model, where):
         return callback(model, where, x, arcs, node_id, depot_u, data, theta, M)
@@ -1680,8 +2349,9 @@ for r, route in enumerate(routes):
         skeleton,
         t0=0.0,
         E0=data['CapE'],
-        max_station_visits_per_leg=3,
-        max_labels_per_node=50
+        max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+        max_labels_per_node=DP_MAX_LABELS_PER_NODE
+
     )
 
     print(f"\nRoute {r}")
@@ -1689,9 +2359,9 @@ for r, route in enumerate(routes):
 
     if ok_dp:
         print("DP realised path:", list(dp_path))
-        print("DP distance:", dp_dist)
-        ok_sim, _, _ = simulate_route(data, list(dp_path))
-        print("Simulate DP path:", ok_sim)
+        print_dp_path_structure("POSTSOLVE", data, dp_path, dp_dist)
+        ok_sim, fsid, rsn = simulate_route(data, list(dp_path))
+        print("[POSTSOLVE] simulate_route =", ok_sim, fsid, rsn)
         total_dp += dp_dist
     else:
         print("DP INFEASIBLE at leg", fail_i)
@@ -1702,30 +2372,62 @@ print("Objective =", best_payload["obj"])
 
 
 
-# # After solve, for each extracted route:
-# sid_seq = stitch_sid_sequence(route, arc_by_id)
-#
-# # Skeleton = remove stations
-# skeleton = [sid for sid in sid_seq if not is_station(data, sid)]
-#
-# ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
-#     data, skeleton,
-#     t0=0.0,
-#     E0=data['CapE'],
-#     max_station_visits_per_leg=2,
-#     max_labels_per_node=50
-# )
-#
-# print("Skeleton:", skeleton)
-# if ok:
-#     print("DP realised path:", list(dp_full_path))
-#     print("DP distance:", dp_dist)
-#
-#     # Optional: now validate the DP path with your existing simulate_route
-#     ok2, fail_sid, reason = simulate_route(data, list(dp_full_path))
-#     print("Simulate DP path:", ok2, fail_sid, reason)
-# else:
-#     print("DP says infeasible at leg", fail_i, ":", skeleton[fail_i], "->", skeleton[fail_i+1])
-#
-# print("theta =", theta.X)
 
+target_segment = ('C11','C4','D0')
+
+matches = [f for f in e_frags_aug if f['seq'] == target_segment]
+
+print("Num matching arcs:", len(matches))
+
+for f in matches[:5]:
+    print("start_on:", f['start_onboard'], "end_on:", f['end_onboard'])
+
+found = []
+
+for f in e_frags_aug:
+    seq = list(f['seq'])
+    for i in range(len(seq) - 1):
+        if seq[i] == 'C11' and seq[i+1] == 'C4':
+            found.append(seq)
+
+print("Num EF fragments with C11->C4:", len(found))
+for s in found:
+    print(s)
+
+print("\n=== STATE TRANSITIONS ===")
+
+print(segmentation_ids)
+
+if segmentation_ids:
+    for k in range(len(segmentation_ids) - 1):
+        a = arc_by_id_full[segmentation_ids[k]]
+        b = arc_by_id_full[segmentation_ids[k + 1]]
+
+        print(f"{a['seq']} -> {b['seq']}")
+        print("  end_on  :", a['end_onboard'])
+        print("  start_on:", b['start_onboard'])
+        print("  MATCH?  :", a['end_onboard'] == b['start_onboard'])
+        print()
+
+
+TARGET_SEGS = [
+    ('D0','C3'),
+    ('C3','C2','C10'),
+    ('C10','C12','C1','C6','C8'),
+    ('C8','C7','C9'),
+    ('C9','C5','C11'),
+    ('C11','C4','D0'),
+]
+
+def strip(seq):
+    return [sid for sid in seq if not is_station(data, sid)]
+
+print("\n=== TARGET SEGMENT INSPECTION ===")
+
+for seg in TARGET_SEGS:
+    matches = [f for f in e_frags_aug if strip(f['seq']) == list(seg)]
+
+    print(f"\nSegment {seg}: {len(matches)} matches")
+
+    for f in matches:
+        print("  start_on:", f['start_onboard'], "end_on:", f['end_onboard'])
