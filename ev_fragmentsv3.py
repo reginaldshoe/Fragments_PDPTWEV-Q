@@ -360,7 +360,7 @@ def dedup_by_signature(frags):
     seen = set()
     out = []
     for f in frags:
-        sig = (f['seq'], f['Ef'], f['Lf'], f['Tf'], f['Emin'])
+        sig = (f['seq'], f['start_onboard'], f['end_onboard'], f['Ef'], f['Lf'], f['Tf'], f['Emin'])
         if sig in seen:
             continue
         seen.add(sig)
@@ -851,9 +851,8 @@ def enforce_start_states(frags, data):
     for f in frags:
         seq = f['seq']
 
-        # keep original only if valid
-        if f['start_onboard'].issubset({seq[0]}):
-            out.append(f)
+        # always keep original (do NOT filter)
+        out.append(f)
 
         # ensure minimal valid state exists
         if seq[0] in pickup_nodes:
@@ -878,48 +877,52 @@ def enforce_start_states(frags, data):
 
     return out
 
-def augment_states(data, frags):
-    pickup_nodes = {data['nodes'][i][0] for i in data['P']}
+from itertools import combinations
+
+def augment_states(data, frags, max_extra=1):
+
+    nodes = data['nodes']
+    P = data['P']
+    pickup_nodes = {nodes[i][0] for i in P}
     d2p = data['d2p']
 
     out = []
+    seen = set()
 
     for f in frags:
-        seq = f['seq']
+        seq = tuple(f['seq'])
         out.append(f)
+        seen.add((seq, f['start_onboard'], f['end_onboard']))
 
-        # minimal required state
-        start_min = f['start_onboard']
+        # pickups that occur anywhere in this fragment (cannot be "carried-in")
+        pickups_in_seq = {sid for sid in seq if sid in pickup_nodes}
 
-        # pickups delivered inside fragment
-        delivered = {d2p[sid] for sid in seq if sid in d2p}
+        # pickups whose deliveries occur in this fragment (cannot be "carried-in")
+        delivered_pickups = set()
+        for sid in seq:
+            if sid in d2p:          # sid is a delivery node
+                delivered_pickups.add(d2p[sid])  # pickup paired to that delivery
 
-        # pickups appearing in fragment
-        in_seq = {sid for sid in seq if sid in pickup_nodes}
+        # carry candidates: pickups not in seq and not delivered in seq
+        carry_candidates = sorted(pickup_nodes - pickups_in_seq - delivered_pickups)
 
-        # only allow carryover that is NOT:
-        # - delivered inside fragment
-        # - appearing later in fragment
-        carry_candidates = pickup_nodes - delivered - in_seq
+        # add a small number of carryovers (max_extra=1 is usually enough)
+        base_start = f['start_onboard']
 
-        # controlled expansion (1 extra passenger)
-        for p in carry_candidates:
-            start_on = start_min | {p}
+        for k in range(1, max_extra + 1):
+            for extra in combinations(carry_candidates, k):
+                start2 = frozenset(set(base_start) | set(extra))
+                _, end2 = compute_onboard_states(seq, start2, data)
 
-            # recompute end_on
-            load = set(start_on)
-            for sid in seq[1:]:
-                if sid in pickup_nodes:
-                    load.add(sid)
-                elif sid in d2p:
-                    if d2p[sid] in load:
-                        load.remove(d2p[sid])
+                key = (seq, start2, end2)
+                if key in seen:
+                    continue
 
-            new_f = dict(f)
-            new_f['start_onboard'] = frozenset(start_on)
-            new_f['end_onboard'] = frozenset(load)
-
-            out.append(new_f)
+                g = dict(f)
+                g['start_onboard'] = start2
+                g['end_onboard'] = end2
+                out.append(g)
+                seen.add(key)
 
     return out
 
@@ -997,43 +1000,8 @@ def extract_subarcs(data, frags):
                     'Emin': compute_Emin(data, cand),
                     'LocsC': cust_locs(cand, exclude_last=False),
                 })
-        # for i in range(len(seq)):
-        #     for j in range(i + 1, len(seq)):
-        #         sub_seq = seq[i:j + 1]
-        #
-        #         if len(sub_seq) < 2:
-        #             continue
-        #
-        #         start_on = compute_min_start_onboard(sub_seq, data)
-        #
-        #         load = set(start_on)
-        #         for sid in sub_seq[1:]:
-        #             if sid in pickup_nodes:
-        #                 load.add(sid)
-        #             elif sid in data['d2p']:
-        #                 if data['d2p'][sid] in load:
-        #                     load.remove(data['d2p'][sid])
-        #
-        #         end_on = frozenset(load)
-        #
-        #         T, E, L = compute_T_E_L(data, sub_seq)
-        #
-        #         new_arcs.append({
-        #             'seq': tuple(sub_seq),
-        #             'Start': sub_seq[0],
-        #             'End': sub_seq[-1],
-        #             'start_onboard': start_on,
-        #             'end_onboard': end_on,
-        #             'contains_charge': f['contains_charge'],
-        #             'min_start_energy': compute_Emin(data, sub_seq),
-        #             'Tf': float(T),
-        #             'Ef': float(E),
-        #             'Lf': float(L),
-        #             'Df': compute_distance(data, sub_seq),
-        #         })
 
     return new_arcs
-
 
 def deduplicate_arcs(arcs):
     seen = set()
@@ -1082,7 +1050,7 @@ def stats_ext(efrags):
     return out
 
 # enumerate fragments and stats
-instance = 'c101C12.txt'
+instance = 'c101C6_2.txt'
 data = read_instance(path / instance)
 
 t0_preprocess = perf_counter() #time on
@@ -1098,7 +1066,7 @@ r_frags_dedup = dedup_exact(frags)
 r_frags_meta = attach_metadata(data, r_frags_dedup, exclude_last_ef = False)
 r_frags_undom = dominance_filter(r_frags_meta)
 r_frags_undom = dedup_by_signature(r_frags_undom)
-r_frags_undom = enforce_start_states(r_frags_undom,data)
+# r_frags_undom = enforce_start_states(r_frags_undom,data)
 # r_frags_undom = augment_states(data, r_frags_undom)
 
 #extended fragments
@@ -1107,9 +1075,8 @@ e_frags_dedup = dedup_exact(e_frags)
 e_frags_meta = attach_metadata(data, e_frags_dedup, exclude_last_ef = True)
 e_frags_undom = dominance_filter(e_frags_meta)
 e_frags_undom = dedup_by_signature(e_frags_undom)
-
-# e_frags_aug = deduplicate_arcs(e_frags_undom)
-e_frags_aug = deduplicate_arcs(e_frags_undom + extract_subarcs(data,e_frags_undom))
+e_frags_aug = e_frags_undom
+# e_frags_aug = deduplicate_arcs(e_frags_undom + extract_subarcs(data,e_frags_undom))
 
 print("Num arcs:", len(e_frags_aug))
 
@@ -1829,6 +1796,11 @@ if DEBUG_DIAGNOSTICS:
         """
         focus_pos is the index i such that we care about target[i] -> target[i+1]
         """
+
+        if focus_pos < 0 or focus_pos >= len(target_skeleton) - 1:
+            print(f"[near_miss_report] focus_pos={focus_pos} out of range for skeleton length {len(target_skeleton)}")
+            return
+
         u = target_skeleton[focus_pos]
         v = target_skeleton[focus_pos + 1]
 
@@ -2441,64 +2413,34 @@ print("\nTOTAL DP distance =", total_dp)
 print("Theta =", best_payload["theta"])
 print("Objective =", best_payload["obj"])
 
+# segment finding
+# target_segment = ('C11','C4','D0')
+#
+# matches = [f for f in e_frags_aug if f['seq'] == target_segment]
+#
+# print("Num matching arcs:", len(matches))
+#
+# for f in matches[:5]:
+#     print("start_on:", f['start_onboard'], "end_on:", f['end_onboard'])
+#
+# found = []
+#
+# for f in e_frags_aug:
+#     seq = list(f['seq'])
+#     for i in range(len(seq) - 1):
+#         if seq[i] == 'C11' and seq[i+1] == 'C4':
+#             found.append(seq)
+#
 
-
-
-target_segment = ('C11','C4','D0')
-
-matches = [f for f in e_frags_aug if f['seq'] == target_segment]
-
-print("Num matching arcs:", len(matches))
-
-for f in matches[:5]:
-    print("start_on:", f['start_onboard'], "end_on:", f['end_onboard'])
-
-found = []
-
-for f in e_frags_aug:
-    seq = list(f['seq'])
-    for i in range(len(seq) - 1):
-        if seq[i] == 'C11' and seq[i+1] == 'C4':
-            found.append(seq)
-
-print("Num EF fragments with C11->C4:", len(found))
-for s in found:
-    print(s)
-
-print("\n=== STATE TRANSITIONS ===")
-
-print(segmentation_ids)
-
-if segmentation_ids:
-    for k in range(len(segmentation_ids) - 1):
-        a = arc_by_id_full[segmentation_ids[k]]
-        b = arc_by_id_full[segmentation_ids[k + 1]]
-
+print("\n=== STATE TRANSITIONS (ACTUAL CHOSEN ROUTE) ===")
+for ridx, route in enumerate(routes):
+    print(f"Route {ridx}: arc IDs = {route}")
+    for k in range(len(route)-1):
+        a = arc_by_id[route[k]]
+        b = arc_by_id[route[k+1]]
         print(f"{a['seq']} -> {b['seq']}")
         print("  end_on  :", a['end_onboard'])
         print("  start_on:", b['start_onboard'])
         print("  MATCH?  :", a['end_onboard'] == b['start_onboard'])
         print()
 
-
-TARGET_SEGS = [
-    ('D0','C3'),
-    ('C3','C2','C10'),
-    ('C10','C12','C1','C6','C8'),
-    ('C8','C7','C9'),
-    ('C9','C5','C11'),
-    ('C11','C4','D0'),
-]
-
-def strip(seq):
-    return [sid for sid in seq if not is_station(data, sid)]
-
-print("\n=== TARGET SEGMENT INSPECTION ===")
-
-for seg in TARGET_SEGS:
-    matches = [f for f in e_frags_aug if strip(f['seq']) == list(seg)]
-
-    print(f"\nSegment {seg}: {len(matches)} matches")
-
-    for f in matches:
-        print("  start_on:", f['start_onboard'], "end_on:", f['end_onboard'])
