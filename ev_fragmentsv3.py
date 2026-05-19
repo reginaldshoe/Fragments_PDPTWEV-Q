@@ -22,7 +22,7 @@ path = Path.cwd() / "instances"
 
 DEBUG = False
 DEBUG_CALLBACK = False
-DEBUG_DIAGNOSTICS = False
+DEBUG_DIAGNOSTICS = True
 
 FORCE_CHAIN = False
 RUN_OPTIONA = True
@@ -844,6 +844,39 @@ def extend_all_fragments(data, frags):
 
     return out
 
+def enforce_start_states(frags, data):
+    pickup_nodes = {data['nodes'][i][0] for i in data['P']}
+    out = []
+
+    for f in frags:
+        seq = f['seq']
+
+        # keep original only if valid
+        if f['start_onboard'].issubset({seq[0]}):
+            out.append(f)
+
+        # ensure minimal valid state exists
+        if seq[0] in pickup_nodes:
+            load = {seq[0]}
+        else:
+            load = set()
+
+        # recompute end_on
+        for sid in seq[1:]:
+            if sid in pickup_nodes:
+                load.add(sid)
+            elif sid in data['d2p']:
+                p = data['d2p'][sid]
+                if p in load:
+                    load.remove(p)
+
+        new_f = dict(f)
+        new_f['start_onboard'] = frozenset({seq[0]}) if seq[0] in pickup_nodes else frozenset()
+        new_f['end_onboard'] = frozenset(load)
+
+        out.append(new_f)
+
+    return out
 
 def augment_states(data, frags):
     pickup_nodes = {data['nodes'][i][0] for i in data['P']}
@@ -900,7 +933,7 @@ def compute_min_start_onboard(seq, data):
 
     for sid in seq:
         if sid in pickup_nodes:
-            # ✅ MUST be onboard when visiting pickup
+            # MUST be onboard when visiting pickup
             required.add(sid)
             load.add(sid)
             allowed.add(sid)
@@ -917,9 +950,8 @@ def compute_min_start_onboard(seq, data):
 
 def extract_subarcs(data, frags):
     nodes = data['nodes']
-    sid_to_i = data['sid_to_i']
     P = data['P']
-
+    d2p = data['d2p']
     # pickup nodes (cp)
     pickup_nodes = {nodes[i][0] for i in P}
 
@@ -927,40 +959,78 @@ def extract_subarcs(data, frags):
 
     for f in frags:
         seq = list(f['seq'])
-        for i in range(len(seq)):
-            for j in range(i + 1, len(seq)):
-                sub_seq = seq[i:j + 1]
 
-                if len(sub_seq) < 2:
-                    continue
+        for i in range(len(seq) - 1):
+            u = seq[i]
+            v = seq[i + 1]
 
-                start_on = compute_min_start_onboard(sub_seq, data)
+            # u is a pickup, v is its paired delivery
+            if u in pickup_nodes and v in d2p and d2p[v] == u:
 
-                load = set(start_on)
-                for sid in sub_seq[1:]:
-                    if sid in pickup_nodes:
-                        load.add(sid)
-                    elif sid in data['d2p']:
-                        if data['d2p'][sid] in load:
-                            load.remove(data['d2p'][sid])
+                # Try direct to depot, else one station
+                if energy_ok_fullbatt(data, v, 'D0'):
+                    cand = (u, v, 'D0')
+                else:
+                    s = best_station_between(data, v, 'D0')
+                    if s is None:
+                        continue
+                    cand = (u, v, s, 'D0')
 
-                end_on = frozenset(load)
+                # enforce proper states: pickup is onboard at start, empty at end
+                start_on = frozenset({u})
+                end_on = frozenset()
 
-                T, E, L = compute_T_E_L(data, sub_seq)
+                Tf, Ef, Lf = compute_T_E_L(data, cand)
 
                 new_arcs.append({
-                    'seq': tuple(sub_seq),
-                    'Start': sub_seq[0],
-                    'End': sub_seq[-1],
+                    'seq': cand,
+                    'Start': cand[0],
+                    'End': cand[-1],
                     'start_onboard': start_on,
                     'end_onboard': end_on,
-                    'contains_charge': f['contains_charge'],
-                    'min_start_energy': compute_Emin(data, sub_seq),
-                    'Tf': float(T),
-                    'Ef': float(E),
-                    'Lf': float(L),
-                    'Df': compute_distance(data, sub_seq),
+                    'contains_charge': any(is_station(data, x) for x in cand),
+                    'min_start_energy': compute_Emin(data, cand),
+                    'Tf': float(Tf),
+                    'Ef': float(Ef),
+                    'Lf': float(Lf),
+                    'Df': compute_distance(data, cand),
+                    'Emin': compute_Emin(data, cand),
+                    'LocsC': cust_locs(cand, exclude_last=False),
                 })
+        # for i in range(len(seq)):
+        #     for j in range(i + 1, len(seq)):
+        #         sub_seq = seq[i:j + 1]
+        #
+        #         if len(sub_seq) < 2:
+        #             continue
+        #
+        #         start_on = compute_min_start_onboard(sub_seq, data)
+        #
+        #         load = set(start_on)
+        #         for sid in sub_seq[1:]:
+        #             if sid in pickup_nodes:
+        #                 load.add(sid)
+        #             elif sid in data['d2p']:
+        #                 if data['d2p'][sid] in load:
+        #                     load.remove(data['d2p'][sid])
+        #
+        #         end_on = frozenset(load)
+        #
+        #         T, E, L = compute_T_E_L(data, sub_seq)
+        #
+        #         new_arcs.append({
+        #             'seq': tuple(sub_seq),
+        #             'Start': sub_seq[0],
+        #             'End': sub_seq[-1],
+        #             'start_onboard': start_on,
+        #             'end_onboard': end_on,
+        #             'contains_charge': f['contains_charge'],
+        #             'min_start_energy': compute_Emin(data, sub_seq),
+        #             'Tf': float(T),
+        #             'Ef': float(E),
+        #             'Lf': float(L),
+        #             'Df': compute_distance(data, sub_seq),
+        #         })
 
     return new_arcs
 
@@ -1012,7 +1082,7 @@ def stats_ext(efrags):
     return out
 
 # enumerate fragments and stats
-instance = 'c104C10.txt'
+instance = 'c101C12.txt'
 data = read_instance(path / instance)
 
 t0_preprocess = perf_counter() #time on
@@ -1028,7 +1098,8 @@ r_frags_dedup = dedup_exact(frags)
 r_frags_meta = attach_metadata(data, r_frags_dedup, exclude_last_ef = False)
 r_frags_undom = dominance_filter(r_frags_meta)
 r_frags_undom = dedup_by_signature(r_frags_undom)
-r_frags_undom = augment_states(data, r_frags_undom)
+r_frags_undom = enforce_start_states(r_frags_undom,data)
+# r_frags_undom = augment_states(data, r_frags_undom)
 
 #extended fragments
 e_frags = extend_all_fragments(data, r_frags_undom)
@@ -1037,8 +1108,8 @@ e_frags_meta = attach_metadata(data, e_frags_dedup, exclude_last_ef = True)
 e_frags_undom = dominance_filter(e_frags_meta)
 e_frags_undom = dedup_by_signature(e_frags_undom)
 
-e_frags_aug = deduplicate_arcs(e_frags_undom)
-# e_frags_aug = deduplicate_arcs(e_frags_undom + extract_subarcs(data,e_frags_undom))
+# e_frags_aug = deduplicate_arcs(e_frags_undom)
+e_frags_aug = deduplicate_arcs(e_frags_undom + extract_subarcs(data,e_frags_undom))
 
 print("Num arcs:", len(e_frags_aug))
 
