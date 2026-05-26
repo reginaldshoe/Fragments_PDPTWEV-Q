@@ -607,7 +607,6 @@ def enumerate_base_paths(data, maxlen):
                         NewWork.add(newst)
 
             # move to charging station (avoid station to station)
-            # TODO: can probably nuance this, only attempt station if not enough energy to do anything else
             prev_station = (path[-1] in S)
             if prev_station:
                 prune('prev_station')
@@ -844,176 +843,6 @@ def extend_all_fragments(data, frags):
 
     return out
 
-def enforce_start_states(frags, data):
-    pickup_nodes = {data['nodes'][i][0] for i in data['P']}
-    out = []
-
-    for f in frags:
-        seq = f['seq']
-
-        # always keep original (do NOT filter)
-        out.append(f)
-
-        # ensure minimal valid state exists
-        if seq[0] in pickup_nodes:
-            load = {seq[0]}
-        else:
-            load = set()
-
-        # recompute end_on
-        for sid in seq[1:]:
-            if sid in pickup_nodes:
-                load.add(sid)
-            elif sid in data['d2p']:
-                p = data['d2p'][sid]
-                if p in load:
-                    load.remove(p)
-
-        new_f = dict(f)
-        new_f['start_onboard'] = frozenset({seq[0]}) if seq[0] in pickup_nodes else frozenset()
-        new_f['end_onboard'] = frozenset(load)
-
-        out.append(new_f)
-
-    return out
-
-from itertools import combinations
-
-def augment_states(data, frags, max_extra=1):
-
-    nodes = data['nodes']
-    P = data['P']
-    pickup_nodes = {nodes[i][0] for i in P}
-    d2p = data['d2p']
-
-    out = []
-    seen = set()
-
-    for f in frags:
-        seq = tuple(f['seq'])
-        out.append(f)
-        seen.add((seq, f['start_onboard'], f['end_onboard']))
-
-        # pickups that occur anywhere in this fragment (cannot be "carried-in")
-        pickups_in_seq = {sid for sid in seq if sid in pickup_nodes}
-
-        # pickups whose deliveries occur in this fragment (cannot be "carried-in")
-        delivered_pickups = set()
-        for sid in seq:
-            if sid in d2p:          # sid is a delivery node
-                delivered_pickups.add(d2p[sid])  # pickup paired to that delivery
-
-        # carry candidates: pickups not in seq and not delivered in seq
-        carry_candidates = sorted(pickup_nodes - pickups_in_seq - delivered_pickups)
-
-        # add a small number of carryovers (max_extra=1 is usually enough)
-        base_start = f['start_onboard']
-
-        for k in range(1, max_extra + 1):
-            for extra in combinations(carry_candidates, k):
-                start2 = frozenset(set(base_start) | set(extra))
-                _, end2 = compute_onboard_states(seq, start2, data)
-
-                key = (seq, start2, end2)
-                if key in seen:
-                    continue
-
-                g = dict(f)
-                g['start_onboard'] = start2
-                g['end_onboard'] = end2
-                out.append(g)
-                seen.add(key)
-
-    return out
-
-def compute_min_start_onboard(seq, data):
-    pickup_nodes = {data['nodes'][i][0] for i in data['P']}
-    d2p = data['d2p']
-
-    load = set()
-    required = set()
-    allowed = set() # pickups seen so far
-
-    for sid in seq:
-        if sid in pickup_nodes:
-            # MUST be onboard when visiting pickup
-            required.add(sid)
-            load.add(sid)
-            allowed.add(sid)
-        elif sid in d2p:
-            p = d2p[sid]
-
-            if p not in load:
-                required.add(p)
-            else:
-                load.remove(p)
-
-    required = {p for p in required if p in allowed}
-    return frozenset(required)
-
-def extract_subarcs(data, frags):
-    nodes = data['nodes']
-    P = data['P']
-    d2p = data['d2p']
-    # pickup nodes (cp)
-    pickup_nodes = {nodes[i][0] for i in P}
-
-    new_arcs = []
-
-    for f in frags:
-        seq = list(f['seq'])
-
-        for i in range(len(seq) - 1):
-            u = seq[i]
-            v = seq[i + 1]
-
-            # u is a pickup, v is its paired delivery
-            if u in pickup_nodes and v in d2p and d2p[v] == u:
-
-                # Try direct to depot, else one station
-                if energy_ok_fullbatt(data, v, 'D0'):
-                    cand = (u, v, 'D0')
-                else:
-                    s = best_station_between(data, v, 'D0')
-                    if s is None:
-                        continue
-                    cand = (u, v, s, 'D0')
-
-                # enforce proper states: pickup is onboard at start, empty at end
-                start_on = frozenset({u})
-                end_on = frozenset()
-
-                Tf, Ef, Lf = compute_T_E_L(data, cand)
-
-                new_arcs.append({
-                    'seq': cand,
-                    'Start': cand[0],
-                    'End': cand[-1],
-                    'start_onboard': start_on,
-                    'end_onboard': end_on,
-                    'contains_charge': any(is_station(data, x) for x in cand),
-                    'min_start_energy': compute_Emin(data, cand),
-                    'Tf': float(Tf),
-                    'Ef': float(Ef),
-                    'Lf': float(Lf),
-                    'Df': compute_distance(data, cand),
-                    'Emin': compute_Emin(data, cand),
-                    'LocsC': cust_locs(cand, exclude_last=False),
-                })
-
-    return new_arcs
-
-def deduplicate_arcs(arcs):
-    seen = set()
-    out = []
-
-    for f in arcs:
-        key = (f['seq'], f['start_onboard'], f['end_onboard'])
-        if key not in seen:
-            seen.add(key)
-            out.append(f)
-
-    return out
 
 # stats helper functions to test fragment output
 
@@ -1066,8 +895,7 @@ r_frags_dedup = dedup_exact(frags)
 r_frags_meta = attach_metadata(data, r_frags_dedup, exclude_last_ef = False)
 r_frags_undom = dominance_filter(r_frags_meta)
 r_frags_undom = dedup_by_signature(r_frags_undom)
-# r_frags_undom = enforce_start_states(r_frags_undom,data)
-# r_frags_undom = augment_states(data, r_frags_undom)
+
 
 #extended fragments
 e_frags = extend_all_fragments(data, r_frags_undom)
@@ -1076,7 +904,7 @@ e_frags_meta = attach_metadata(data, e_frags_dedup, exclude_last_ef = True)
 e_frags_undom = dominance_filter(e_frags_meta)
 e_frags_undom = dedup_by_signature(e_frags_undom)
 e_frags_aug = e_frags_undom
-# e_frags_aug = deduplicate_arcs(e_frags_undom + extract_subarcs(data,e_frags_undom))
+
 
 print("Num arcs:", len(e_frags_aug))
 
