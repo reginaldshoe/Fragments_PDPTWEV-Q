@@ -1,0 +1,21 @@
+{
+  "name": "refactor_v1a_baseline_freeze",
+  "role": "derived output / baseline freeze",
+  "created_by": "M365 Copilot",
+  "created_utc": "2026-05-28T12:37:42.128702+00:00",
+  "files": [
+    "README_refactor_v1a.md",
+    "experiments/__init__.py",
+    "experiments/run_baseline.py",
+    "legacy/.gitkeep",
+    "legacy/README.md",
+    "requirements.txt",
+    "tests/__init__.py",
+    "tests/test_baseline_freeze.py"
+  ],
+  "notes": [
+    "This package deliberately does not reconstruct or alter ev_fragmentsv3.py.",
+    "The runner copies the exact local root-level ev_fragmentsv3.py when executed in the project root.",
+    "This is intended to avoid source-integrity risks during the first baseline-freeze step."
+  ]
+}

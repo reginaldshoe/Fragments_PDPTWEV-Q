@@ -1,0 +1,368 @@
+INSTANCE: c101C6_2.txt horizon= 2472.0 stations= 3 pickups= 6
+Num arcs: 112
+[OPTION-A] DP distance = 376.072677
+[OPTION-A] DP path = ['D0', 'C6', 'C12', 'C5', 'C11', 'C7', 'C8', 'C1', 'C2', 'C3', 'C4', 'C9', 'C10', 'D0']
+[OPTION-A] Stations used (0): []
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2767833
+Academic license 2767833 - for non-commercial use only - registered to s4___@student.uq.edu.au
+Set parameter LazyConstraints to value 1
+Set parameter Threads to value 1
+
+=== COVERAGE REPORT ===
+Skeleton: ['D0', 'C6', 'C12', 'C5', 'C11', 'C7', 'C8', 'C1', 'C2', 'C3', 'C4', 'C9', 'C10', 'D0']
+
+Link D0 -> C6:
+  Supported by 0 EF(s)
+  *** NO EF SUPPORT ***
+
+Link C6 -> C12:
+  Supported by 10 EF(s)
+  Example stripped EF seqs:
+     ['C6', 'C12', 'C5', 'C11', 'D0']
+     ['C6', 'C12', 'C11', 'C5', 'D0']
+     ['C6', 'C12', 'C5', 'C11', 'C1']
+
+Link C12 -> C5:
+  Supported by 10 EF(s)
+  Example stripped EF seqs:
+     ['C6', 'C12', 'C5', 'C11', 'D0']
+     ['C6', 'C12', 'C5', 'C11', 'C1']
+     ['C6', 'C12', 'C5', 'C11', 'C3']
+
+Link C5 -> C11:
+  Supported by 20 EF(s)
+  Example stripped EF seqs:
+     ['C12', 'C6', 'C5', 'C11', 'D0']
+     ['C12', 'C6', 'C5', 'C11', 'C1']
+     ['C12', 'C6', 'C5', 'C11', 'C3']
+
+Link C11 -> C7:
+  Supported by 5 EF(s)
+  Example stripped EF seqs:
+     ['C12', 'C6', 'C5', 'C11', 'C7']
+     ['C6', 'C5', 'C11', 'C7']
+     ['C6', 'C12', 'C5', 'C11', 'C7']
+
+Link C7 -> C8:
+  Supported by 12 EF(s)
+  Example stripped EF seqs:
+     ['C7', 'C8', 'D0']
+     ['C7', 'C8', 'D0']
+     ['C7', 'C8', 'C1']
+
+Link C8 -> C1:
+  Supported by 2 EF(s)
+  Example stripped EF seqs:
+     ['C7', 'C8', 'C1']
+     ['C7', 'C8', 'C1']
+
+Link C1 -> C2:
+  Supported by 12 EF(s)
+  Example stripped EF seqs:
+     ['C1', 'C2', 'D0']
+     ['C1', 'C2', 'D0']
+     ['C1', 'C2', 'C3']
+
+Link C2 -> C3:
+  Supported by 2 EF(s)
+  Example stripped EF seqs:
+     ['C1', 'C2', 'C3']
+     ['C1', 'C2', 'C3']
+
+Link C3 -> C4:
+  Supported by 18 EF(s)
+  Example stripped EF seqs:
+     ['C3', 'C4', 'D0']
+     ['C3', 'C4', 'D0']
+     ['C3', 'C4', 'D0']
+
+Link C4 -> C9:
+  Supported by 3 EF(s)
+  Example stripped EF seqs:
+     ['C3', 'C4', 'C9']
+     ['C3', 'C4', 'C9']
+     ['C3', 'C4', 'C9']
+
+Link C9 -> C10:
+  Supported by 18 EF(s)
+  Example stripped EF seqs:
+     ['C9', 'C10', 'D0']
+     ['C9', 'C10', 'D0']
+     ['C9', 'C10', 'D0']
+
+Link C10 -> D0:
+  Supported by 3 EF(s)
+  Example stripped EF seqs:
+     ['C9', 'C10', 'D0']
+     ['C9', 'C10', 'D0']
+     ['C9', 'C10', 'D0']
+
+=== SEGMENTATION COVERAGE REPORT ===
+Target skeleton: ['D0', 'C6', 'C12', 'C5', 'C11', 'C7', 'C8', 'C1', 'C2', 'C3', 'C4', 'C9', 'C10', 'D0']
+Feasible segmentation: False
+pos 0: D0 -> C6  | candidate arcs starting here: 1
+pos 1: C6 -> C12  | candidate arcs starting here: 1
+pos 2: C12 -> C5  | candidate arcs starting here: 1
+pos 3: C5 -> C11  | candidate arcs starting here: 0
+pos 4: C11 -> C7  | candidate arcs starting here: 0
+pos 5: C7 -> C8  | candidate arcs starting here: 2
+pos 6: C8 -> C1  | candidate arcs starting here: 0
+pos 7: C1 -> C2  | candidate arcs starting here: 2
+pos 8: C2 -> C3  | candidate arcs starting here: 0
+pos 9: C3 -> C4  | candidate arcs starting here: 3
+pos 10: C4 -> C9  | candidate arcs starting here: 0
+pos 11: C9 -> C10  | candidate arcs starting here: 3
+pos 12: C10 -> D0  | candidate arcs starting here: 0
+First unreachable prefix length: 1
+
+=== NEAR MISS at pos 2: C12 -> C5 ===
+Arcs starting at C12: 26
+   6 ['C12', 'C6', 'C11', 'C5', 'D0']
+   7 ['C12', 'C6', 'C5', 'C11', 'D0']
+   8 ['C12', 'C6', 'C11', 'C5', 'C1']
+   9 ['C12', 'C6', 'C5', 'C11', 'C1']
+   10 ['C12', 'C6', 'C11', 'C5', 'C3']
+   11 ['C12', 'C6', 'C5', 'C11', 'C3']
+   12 ['C12', 'C6', 'C11', 'C5', 'C7']
+   13 ['C12', 'C6', 'C5', 'C11', 'C7']
+   14 ['C12', 'C6', 'C11', 'C5', 'C9']
+   15 ['C12', 'C6', 'C5', 'C11', 'C9']
+Arcs containing C12->C5 internally: 10
+   44 start= C6 window= ['C6', 'C12', 'C5', 'C11', 'D0']
+   46 start= C6 window= ['C6', 'C12', 'C5', 'C11', 'C1']
+   48 start= C6 window= ['C6', 'C12', 'C5', 'C11', 'C3']
+   50 start= C6 window= ['C6', 'C12', 'C5', 'C11', 'C7']
+   52 start= C6 window= ['C6', 'C12', 'C5', 'C11', 'C9']
+   54 start= C12 window= ['C12', 'C5', 'C11', 'D0']
+   56 start= C12 window= ['C12', 'C5', 'C11', 'C1']
+   58 start= C12 window= ['C12', 'C5', 'C11', 'C3']
+   60 start= C12 window= ['C12', 'C5', 'C11', 'C7']
+   62 start= C12 window= ['C12', 'C5', 'C11', 'C9']
+
+=== NEAR MISS at pos 3: C5 -> C11 ===
+Arcs starting at C5: 0
+Arcs containing C5->C11 internally: 20
+   7 start= C12 window= ['C12', 'C6', 'C5', 'C11', 'D0']
+   9 start= C12 window= ['C12', 'C6', 'C5', 'C11', 'C1']
+   11 start= C12 window= ['C12', 'C6', 'C5', 'C11', 'C3']
+   13 start= C12 window= ['C12', 'C6', 'C5', 'C11', 'C7']
+   15 start= C12 window= ['C12', 'C6', 'C5', 'C11', 'C9']
+   17 start= C6 window= ['C6', 'C5', 'C11', 'D0']
+   19 start= C6 window= ['C6', 'C5', 'C11', 'C1']
+   21 start= C6 window= ['C6', 'C5', 'C11', 'C3']
+   23 start= C6 window= ['C6', 'C5', 'C11', 'C7']
+   25 start= C6 window= ['C6', 'C5', 'C11', 'C9']
+
+=== NEAR MISS at pos 7: C1 -> C2 ===
+Arcs starting at C1: 12
+   100 ['C1', 'C2', 'D0']
+   101 ['C1', 'C2', 'D0']
+   102 ['C1', 'C2', 'C3']
+   103 ['C1', 'C2', 'C3']
+   104 ['C1', 'C2', 'C6']
+   105 ['C1', 'C2', 'C6']
+   106 ['C1', 'C2', 'C7']
+   107 ['C1', 'C2', 'C7']
+   108 ['C1', 'C2', 'C9']
+   109 ['C1', 'C2', 'C9']
+Arcs containing C1->C2 internally: 12
+   100 start= C1 window= ['C1', 'C2', 'D0']
+   101 start= C1 window= ['C1', 'C2', 'D0']
+   102 start= C1 window= ['C1', 'C2', 'C3']
+   103 start= C1 window= ['C1', 'C2', 'C3']
+   104 start= C1 window= ['C1', 'C2', 'C6']
+   105 start= C1 window= ['C1', 'C2', 'C6']
+   106 start= C1 window= ['C1', 'C2', 'C7']
+   107 start= C1 window= ['C1', 'C2', 'C7']
+   108 start= C1 window= ['C1', 'C2', 'C9']
+   109 start= C1 window= ['C1', 'C2', 'C9']
+
+=== NEAR MISS at pos 10: C4 -> C9 ===
+Arcs starting at C4: 0
+Arcs containing C4->C9 internally: 3
+   38 start= C3 window= ['C3', 'C4', 'C9']
+   39 start= C3 window= ['C3', 'C4', 'C9']
+   40 start= C3 window= ['C3', 'C4', 'C9']
+
+=== NEAR MISS at pos 11: C9 -> C10 ===
+Arcs starting at C9: 18
+   76 ['C9', 'C10', 'D0']
+   77 ['C9', 'C10', 'D0']
+   78 ['C9', 'C10', 'D0']
+   79 ['C9', 'C10', 'C1']
+   80 ['C9', 'C10', 'C1']
+   81 ['C9', 'C10', 'C1']
+   82 ['C9', 'C10', 'C3']
+   83 ['C9', 'C10', 'C3']
+   84 ['C9', 'C10', 'C3']
+   85 ['C9', 'C10', 'C6']
+Arcs containing C9->C10 internally: 18
+   76 start= C9 window= ['C9', 'C10', 'D0']
+   77 start= C9 window= ['C9', 'C10', 'D0']
+   78 start= C9 window= ['C9', 'C10', 'D0']
+   79 start= C9 window= ['C9', 'C10', 'C1']
+   80 start= C9 window= ['C9', 'C10', 'C1']
+   81 start= C9 window= ['C9', 'C10', 'C1']
+   82 start= C9 window= ['C9', 'C10', 'C3']
+   83 start= C9 window= ['C9', 'C10', 'C3']
+   84 start= C9 window= ['C9', 'C10', 'C3']
+   85 start= C9 window= ['C9', 'C10', 'C6']
+
+=== PICKUP-BOUNDARY SEGMENTATION REPORT ===
+Target skeleton: ['D0', 'C6', 'C12', 'C5', 'C11', 'C7', 'C8', 'C1', 'C2', 'C3', 'C4', 'C9', 'C10', 'D0']
+Boundary positions: [0, 1, 2, 5, 7, 9, 11, 13]
+Feasible segmentation: True
+start at pos 0 (D0): 1 candidate arc(s)
+start at pos 1 (C6): 1 candidate arc(s)
+start at pos 2 (C12): 1 candidate arc(s)
+start at pos 5 (C7): 2 candidate arc(s)
+start at pos 7 (C1): 2 candidate arc(s)
+start at pos 9 (C3): 3 candidate arc(s)
+start at pos 11 (C9): 3 candidate arc(s)
+One segmentation (arc IDs): [2, 50, 66, 102, 38, 76]
+Segment stripped sequences:
+   2 ['D0', 'C6']
+   50 ['C6', 'C12', 'C5', 'C11', 'C7']
+   66 ['C7', 'C8', 'C1']
+   102 ['C1', 'C2', 'C3']
+   38 ['C3', 'C4', 'C9']
+   76 ['C9', 'C10', 'D0']
+
+=== PICKUP-BOUNDARY SEGMENTATION REPORT ===
+Target skeleton: ['D0', 'C6', 'C12', 'C5', 'C11', 'C7', 'C8', 'C1', 'C2', 'C3', 'C4', 'C9', 'C10', 'D0']
+Boundary positions: [0, 1, 2, 5, 7, 9, 11, 13]
+Feasible segmentation: True
+start at pos 0 (D0): 1 candidate arc(s)
+start at pos 1 (C6): 1 candidate arc(s)
+start at pos 2 (C12): 1 candidate arc(s)
+start at pos 5 (C7): 2 candidate arc(s)
+start at pos 7 (C1): 2 candidate arc(s)
+start at pos 9 (C3): 3 candidate arc(s)
+start at pos 11 (C9): 3 candidate arc(s)
+One segmentation (arc IDs): [2, 50, 66, 102, 38, 76]
+Segment stripped sequences:
+   2 ['D0', 'C6']
+   50 ['C6', 'C12', 'C5', 'C11', 'C7']
+   66 ['C7', 'C8', 'C1']
+   102 ['C1', 'C2', 'C3']
+   38 ['C3', 'C4', 'C9']
+   76 ['C9', 'C10', 'D0']
+
+=== STATE-COMPATIBLE SEGMENTATION REPORT ===
+Target skeleton: ['D0', 'C6', 'C12', 'C5', 'C11', 'C7', 'C8', 'C1', 'C2', 'C3', 'C4', 'C9', 'C10', 'D0']
+Boundary positions: [0, 1, 2, 5, 7, 9, 11, 13]
+Feasible: False
+Reachable boundary positions: [0]
+start at pos 0 (D0): 1 candidates
+start at pos 1 (C6): 1 candidates
+start at pos 2 (C12): 1 candidates
+start at pos 5 (C7): 2 candidates
+start at pos 7 (C1): 2 candidates
+start at pos 9 (C3): 3 candidates
+start at pos 11 (C9): 3 candidates
+
+--- solving with exact K = 1 ---
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2767833
+Academic license 2767833 - for non-commercial use only - registered to s4___@student.uq.edu.au
+Set parameter LazyConstraints to value 1
+Set parameter Threads to value 1
+K=1: obj=376.072677, theta=65.732762, depot_starts=1
+
+--- solving with exact K = 2 ---
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2767833
+Academic license 2767833 - for non-commercial use only - registered to s4___@student.uq.edu.au
+Set parameter LazyConstraints to value 1
+Set parameter Threads to value 1
+K=2: obj=376.072677, theta=26.099765, depot_starts=2
+
+--- solving with exact K = 3 ---
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2767833
+Academic license 2767833 - for non-commercial use only - registered to s4___@student.uq.edu.au
+Set parameter LazyConstraints to value 1
+Set parameter Threads to value 1
+K=3: obj=386.039158, theta=31.446707, depot_starts=3
+
+--- solving with exact K = 4 ---
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2767833
+Academic license 2767833 - for non-commercial use only - registered to s4___@student.uq.edu.au
+Set parameter LazyConstraints to value 1
+Set parameter Threads to value 1
+K=4: obj=410.809572, theta=27.936540, depot_starts=4
+
+--- solving with exact K = 5 ---
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2767833
+Academic license 2767833 - for non-commercial use only - registered to s4___@student.uq.edu.au
+Set parameter LazyConstraints to value 1
+Set parameter Threads to value 1
+K=5: obj=460.038624, theta=31.007861, depot_starts=5
+
+--- solving with exact K = 6 ---
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2767833
+Academic license 2767833 - for non-commercial use only - registered to s4___@student.uq.edu.au
+Set parameter LazyConstraints to value 1
+Set parameter Threads to value 1
+K=6: obj=536.196355, theta=31.007861, depot_starts=6
+
+BEST SOLUTION:
+K = 1
+Obj = 376.07267704045523
+Theta = 65.73276248806948
+Preprocessing time: 0.006679699989035726
+Solve time: 181.16175729990937
+Total time: 181.1684369998984
+
+--- DP validation of BEST solution ---
+
+Route 0
+Skeleton: ['D0', 'C9', 'C10', 'C12', 'C6', 'C11', 'C5', 'C7', 'C8', 'C1', 'C2', 'C3', 'C4', 'D0']
+DP realised path: ['D0', 'S15', 'C9', 'C10', 'S0', 'C12', 'C6', 'C11', 'C5', 'S5', 'C7', 'C8', 'S5', 'C1', 'C2', 'S15', 'C3', 'C4', 'D0']
+[POSTSOLVE] DP distance = 376.072677
+[POSTSOLVE] DP path = ['D0', 'S15', 'C9', 'C10', 'S0', 'C12', 'C6', 'C11', 'C5', 'S5', 'C7', 'C8', 'S5', 'C1', 'C2', 'S15', 'C3', 'C4', 'D0']
+[POSTSOLVE] Stations used (5): ['S15', 'S0', 'S5', 'S5', 'S15']
+[POSTSOLVE] simulate_route = False D0 timewindow
+
+TOTAL DP distance = 376.07267707816254
+Theta = 65.73276248806948
+Objective = 376.07267704045523
+
+=== STATE TRANSITIONS (ACTUAL CHOSEN ROUTE) ===
+Route 0: arc IDs = [4, 91, 12, 67, 103, 27]
+('D0', 'C9') -> ('C9', 'C10', 'C12')
+  end_on  : frozenset({'C9'})
+  start_on: frozenset({'C9'})
+  MATCH?  : True
+
+('C9', 'C10', 'C12') -> ('C12', 'C6', 'C11', 'C5', 'C7')
+  end_on  : frozenset({'C12'})
+  start_on: frozenset({'C12'})
+  MATCH?  : True
+
+('C12', 'C6', 'C11', 'C5', 'C7') -> ('C7', 'C8', 'C1')
+  end_on  : frozenset({'C7'})
+  start_on: frozenset({'C7'})
+  MATCH?  : True
+
+('C7', 'C8', 'C1') -> ('C1', 'C2', 'C3')
+  end_on  : frozenset({'C1'})
+  start_on: frozenset({'C1'})
+  MATCH?  : True
+
+('C1', 'C2', 'C3') -> ('C3', 'C4', 'D0')
+  end_on  : frozenset({'C3'})
+  start_on: frozenset({'C3'})
+  MATCH?  : True
+
