@@ -1,0 +1,48 @@
+{
+  "source": "ev_fragmentsv3.py",
+  "instance": "instances\\c101C6_2.txt",
+  "max_base_path_len": 18,
+  "counts": {
+    "base_paths": 126,
+    "restricted_raw": 450,
+    "restricted_dedup": 210,
+    "restricted_meta": 210,
+    "restricted_undominated": 28,
+    "extended_raw": 112,
+    "extended_dedup": 112,
+    "extended_meta": 112,
+    "extended_undominated": 112
+  },
+  "restricted_raw_summary": {
+    "count": 450,
+    "min_len": 2,
+    "max_len": 7,
+    "avg_len": 4.266666666666667,
+    "with_charging": 380,
+    "without_charging": 70
+  },
+  "restricted_undominated_summary": {
+    "count": 28,
+    "min_len": 2,
+    "max_len": 4,
+    "avg_len": 2.7857142857142856,
+    "with_charging": 6,
+    "without_charging": 22
+  },
+  "extended_raw_summary": {
+    "count": 112,
+    "min_len": 3,
+    "max_len": 5,
+    "avg_len": 3.857142857142857,
+    "with_charging": 36,
+    "without_charging": 76
+  },
+  "extended_undominated_summary": {
+    "count": 112,
+    "min_len": 3,
+    "max_len": 5,
+    "avg_len": 3.857142857142857,
+    "with_charging": 36,
+    "without_charging": 76
+  }
+}

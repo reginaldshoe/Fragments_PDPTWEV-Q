@@ -1,0 +1,32 @@
+{
+  "name": "refactor_v1b_fragment_pipeline",
+  "role": "derived output / fragment-pipeline refactor",
+  "created_by": "M365 Copilot",
+  "created_utc": "2026-05-28T13:03:41.254917+00:00",
+  "files": [
+    "README_refactor_v1b.md",
+    "evrp_fragments_v1b/__init__.py",
+    "evrp_fragments_v1b/fragments/__init__.py",
+    "evrp_fragments_v1b/fragments/base_paths.py",
+    "evrp_fragments_v1b/fragments/dominance.py",
+    "evrp_fragments_v1b/fragments/extended.py",
+    "evrp_fragments_v1b/fragments/metadata.py",
+    "evrp_fragments_v1b/fragments/onboard.py",
+    "evrp_fragments_v1b/fragments/pipeline.py",
+    "evrp_fragments_v1b/fragments/restricted.py",
+    "evrp_fragments_v1b/legacy_adapter.py",
+    "evrp_fragments_v1b/node_utils.py",
+    "evrp_fragments_v1b/resources.py",
+    "evrp_fragments_v1b/types.py",
+    "experiments/__init__.py",
+    "experiments/compare_fragment_pipeline.py",
+    "requirements.txt",
+    "tests/__init__.py",
+    "tests/test_fragment_pipeline_smoke.py"
+  ],
+  "notes": [
+    "This stage isolates fragment-pipeline functions and typed records.",
+    "Base path enumeration is delegated to the legacy source via a prefix adapter to preserve behaviour.",
+    "Master model, callback and DP are deliberately out of scope for v1b."
+  ]
+}

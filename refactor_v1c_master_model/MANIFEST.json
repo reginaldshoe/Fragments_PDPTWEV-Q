@@ -1,0 +1,37 @@
+{
+  "name": "refactor_v1c_master_model",
+  "role": "derived output / master-model refactor",
+  "created_by": "M365 Copilot",
+  "created_utc": "2026-05-28T13:41:04.008892+00:00",
+  "files": [
+    "README_refactor_v1c.md",
+    "__init__.py",
+    "evrp_fragments_v1c/__init__.py",
+    "evrp_fragments_v1c/fragments/__init__.py",
+    "evrp_fragments_v1c/fragments/base_paths.py",
+    "evrp_fragments_v1c/fragments/dominance.py",
+    "evrp_fragments_v1c/fragments/extended.py",
+    "evrp_fragments_v1c/fragments/metadata.py",
+    "evrp_fragments_v1c/fragments/onboard.py",
+    "evrp_fragments_v1c/fragments/pipeline.py",
+    "evrp_fragments_v1c/fragments/restricted.py",
+    "evrp_fragments_v1c/legacy_adapter.py",
+    "evrp_fragments_v1c/master/__init__.py",
+    "evrp_fragments_v1c/master/depot_arcs.py",
+    "evrp_fragments_v1c/master/model.py",
+    "evrp_fragments_v1c/master/network.py",
+    "evrp_fragments_v1c/node_utils.py",
+    "evrp_fragments_v1c/resources.py",
+    "evrp_fragments_v1c/types.py",
+    "experiments/__init__.py",
+    "experiments/compare_master_model.py",
+    "requirements.txt",
+    "tests/__init__.py",
+    "tests/test_master_network_smoke.py"
+  ],
+  "notes": [
+    "This stage adds master/depot_arcs.py, master/network.py and master/model.py.",
+    "Callback and energy DP are deliberately out of scope for v1c.",
+    "The experiment script uses package-relative imports to avoid the v1b import-path issue."
+  ]
+}

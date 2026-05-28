@@ -1,0 +1,3 @@
+# v1b fragment-pipeline refactor.
+# Pin against your actual local environment before benchmarking.
+# gurobipy==13.0.1  # only required if legacy prefix imports it in your source
