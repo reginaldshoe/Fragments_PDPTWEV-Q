@@ -1,0 +1,26 @@
+{
+  "name": "refactor_v1d_callback_dp",
+  "role": "derived output / callback and energy-DP refactor overlay",
+  "created_by": "M365 Copilot",
+  "created_utc": "2026-05-30T03:20:39.846090+00:00",
+  "files": [
+    "README_refactor_v1d.md",
+    "__init__.py",
+    "evrp_fragments_v1d/__init__.py",
+    "evrp_fragments_v1d/callback/__init__.py",
+    "evrp_fragments_v1d/callback/diagnostics.py",
+    "evrp_fragments_v1d/callback/energy_dp.py",
+    "evrp_fragments_v1d/callback/lazy_cuts.py",
+    "evrp_fragments_v1d/callback/route_tools.py",
+    "experiments/__init__.py",
+    "experiments/validate_callback_tools.py",
+    "requirements.txt",
+    "tests/__init__.py",
+    "tests/test_callback_tools.py"
+  ],
+  "notes": [
+    "This stage adds callback/energy_dp.py, callback/route_tools.py, callback/lazy_cuts.py and callback/diagnostics.py.",
+    "This package is an overlay intended to be wired into v1c after master-model parity is established.",
+    "Queueing remains out of scope."
+  ]
+}

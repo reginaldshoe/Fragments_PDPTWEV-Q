@@ -1,0 +1,87 @@
+{
+  "compile_results": [
+    {
+      "exists": true,
+      "path": "refactor_v1a_baseline_freeze",
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "Listing 'refactor_v1a_baseline_freeze'...\nListing 'refactor_v1a_baseline_freeze\\\\artefacts'...\nListing 'refactor_v1a_baseline_freeze\\\\experiments'...\nListing 'refactor_v1a_baseline_freeze\\\\legacy'...\nListing 'refactor_v1a_baseline_freeze\\\\tests'...\n"
+    },
+    {
+      "exists": true,
+      "path": "refactor_v1b_fragment_pipeline",
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "Listing 'refactor_v1b_fragment_pipeline'...\nListing 'refactor_v1b_fragment_pipeline\\\\artefacts'...\nListing 'refactor_v1b_fragment_pipeline\\\\evrp_fragments_v1b'...\nListing 'refactor_v1b_fragment_pipeline\\\\evrp_fragments_v1b\\\\fragments'...\nListing 'refactor_v1b_fragment_pipeline\\\\experiments'...\nListing 'refactor_v1b_fragment_pipeline\\\\tests'...\n"
+    },
+    {
+      "exists": true,
+      "path": "refactor_v1c_master_model",
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "Listing 'refactor_v1c_master_model'...\nListing 'refactor_v1c_master_model\\\\artefacts'...\nListing 'refactor_v1c_master_model\\\\evrp_fragments_v1c'...\nListing 'refactor_v1c_master_model\\\\evrp_fragments_v1c\\\\fragments'...\nListing 'refactor_v1c_master_model\\\\evrp_fragments_v1c\\\\master'...\nListing 'refactor_v1c_master_model\\\\experiments'...\nListing 'refactor_v1c_master_model\\\\tests'...\n"
+    },
+    {
+      "exists": true,
+      "path": "refactor_v1d_callback_dp",
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "Listing 'refactor_v1d_callback_dp'...\nListing 'refactor_v1d_callback_dp\\\\artefacts'...\nListing 'refactor_v1d_callback_dp\\\\evrp_fragments_v1d'...\nListing 'refactor_v1d_callback_dp\\\\evrp_fragments_v1d\\\\callback'...\nListing 'refactor_v1d_callback_dp\\\\experiments'...\nListing 'refactor_v1d_callback_dp\\\\tests'...\n"
+    }
+  ],
+  "packages": [
+    {
+      "duplicate_functions": {
+        "strip": [
+          {
+            "file": "refactor_v1a_baseline_freeze\\legacy\\ev_fragmentsv3_legacy.py",
+            "line": 1637,
+            "name": "strip"
+          },
+          {
+            "file": "refactor_v1a_baseline_freeze\\legacy\\ev_fragmentsv3_legacy.py",
+            "line": 1685,
+            "name": "strip"
+          },
+          {
+            "file": "refactor_v1a_baseline_freeze\\legacy\\ev_fragmentsv3_legacy.py",
+            "line": 1768,
+            "name": "strip"
+          }
+        ]
+      },
+      "exists": true,
+      "function_count": 82,
+      "path": "refactor_v1a_baseline_freeze",
+      "python_file_count": 5
+    },
+    {
+      "duplicate_functions": {},
+      "exists": true,
+      "function_count": 43,
+      "path": "refactor_v1b_fragment_pipeline",
+      "python_file_count": 17
+    },
+    {
+      "duplicate_functions": {},
+      "exists": true,
+      "function_count": 45,
+      "path": "refactor_v1c_master_model",
+      "python_file_count": 22
+    },
+    {
+      "duplicate_functions": {},
+      "exists": true,
+      "function_count": 21,
+      "path": "refactor_v1d_callback_dp",
+      "python_file_count": 11
+    }
+  ],
+  "transition_adapter_functions": [
+    "enumerate_base_paths",
+    "get_legacy_function",
+    "load_legacy_namespace",
+    "read_instance",
+    "step"
+  ]
+}

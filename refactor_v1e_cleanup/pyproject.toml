@@ -1,0 +1,9 @@
+[project]
+name = "refactor-v1e-cleanup"
+version = "0.1.0"
+description = "Cleanup and assurance layer for the staged EVRP fragment refactor."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

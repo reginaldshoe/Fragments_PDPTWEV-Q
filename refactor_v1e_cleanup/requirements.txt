@@ -1,0 +1,3 @@
+# refactor_v1e_cleanup uses only the Python standard library.
+# Solver stages should be pinned in the project environment, for example:
+# gurobipy==13.0.1

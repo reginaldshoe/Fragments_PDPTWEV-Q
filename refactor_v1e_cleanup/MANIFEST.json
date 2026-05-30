@@ -1,0 +1,27 @@
+{
+  "name": "refactor_v1e_cleanup",
+  "role": "derived output / cleanup and assurance layer",
+  "created_by": "M365 Copilot",
+  "created_utc": "2026-05-30T03:32:32.134996+00:00",
+  "files": [
+    "README_refactor_v1e.md",
+    "__init__.py",
+    "docs/DUPLICATION_POLICY.md",
+    "docs/FINALISATION_CHECKLIST.md",
+    "evrp_refactor_v1e/__init__.py",
+    "evrp_refactor_v1e/audit.py",
+    "evrp_refactor_v1e/cleanup_manifest.py",
+    "evrp_refactor_v1e/quality_gates.py",
+    "experiments/__init__.py",
+    "experiments/run_cleanup_audit.py",
+    "pyproject.toml",
+    "requirements.txt",
+    "tests/__init__.py",
+    "tests/test_cleanup_audit.py"
+  ],
+  "notes": [
+    "This stage provides audit and cleanup tooling; it does not alter solver logic.",
+    "The audit checks duplicate function names and optional compile status across staged packages.",
+    "Deletion of duplicated helpers should only occur after parity checks pass."
+  ]
+}
