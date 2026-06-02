@@ -1,0 +1,19 @@
+{
+  "name": "evrp_fragments_parity_v2b",
+  "role": "draft output v2 / derived parity harness patch",
+  "behavioural_source": "ev_fragmentsv3.py",
+  "created_by": "M365 Copilot",
+  "patch_notes": [
+    "resolve_legacy_source accepts suffix-less ev_fragmentsv3 and ev_fragmentsv3.py",
+    "designed to overwrite the previous parity_v2 harness when unzipped at repo root"
+  ],
+  "files": [
+    "evrp_fragments_parity_v2/__init__.py",
+    "evrp_fragments_parity_v2/legacy_loader.py",
+    "evrp_fragments_parity_v2/pipeline.py",
+    "experiments/compare_legacy_parity_v2_functions.py",
+    "experiments/run_solver_parity_v2.py",
+    "README_parity_v2b.md",
+    "MANIFEST_parity_v2b.json"
+  ]
+}

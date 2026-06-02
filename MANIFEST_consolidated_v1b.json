@@ -1,0 +1,16 @@
+{
+  "name": "evrp_fragments_consolidated_v1b",
+  "role": "draft output v1b / builder patch",
+  "behavioural_source": "ev_fragmentsv3.py",
+  "created_by": "M365 Copilot",
+  "files": [
+    "experiments/build_consolidated_v1.py",
+    "README_consolidated_v1b_patch.md",
+    "MANIFEST_consolidated_v1b.json"
+  ],
+  "patch_notes": [
+    "Fixes unicodeescape SyntaxError in generated legacy_core.py on Windows paths.",
+    "Generated docstring now uses source_path.as_posix().",
+    "SOURCE_PATH remains a repr-escaped Windows path string."
+  ]
+}

@@ -1,8 +1,4 @@
 {
-  "source": "ev_fragmentsv3.py",
-  "instance": "instances\\c101C6_2.txt",
-  "max_base_path_len": 18,
-  "k_max": 1,
   "fragment_counts": {
     "base_paths": 126,
     "restricted_raw": 450,
@@ -15,8 +11,10 @@
     "extended_undominated": 112
   },
   "depot_arc_count": 6,
-  "master_candidate_arc_count": 118,
   "network_node_count": 9,
   "network_arc_count": 118,
-  "gurobi_model_built": false
+  "gurobi_model_built": true,
+  "model_var_count": 0,
+  "model_constr_count": 0,
+  "big_m": 61.1310068623117
 }

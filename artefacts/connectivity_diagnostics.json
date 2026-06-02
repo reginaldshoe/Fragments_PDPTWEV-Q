@@ -1,0 +1,169 @@
+{
+  "source": "ev_fragmentsv3.py",
+  "instance": "instances\\c101C6_2.txt",
+  "fragment_counts": {
+    "base_paths": 126,
+    "restricted_raw": 450,
+    "restricted_dedup": 210,
+    "restricted_meta": 210,
+    "restricted_undominated": 28,
+    "extended_raw": 112,
+    "extended_dedup": 112,
+    "extended_meta": 112,
+    "extended_undominated": 112
+  },
+  "candidate_arc_count": 118,
+  "node_count": 9,
+  "depot_u": 0,
+  "nodes_reachable_from_depot_count": 7,
+  "nodes_that_can_reach_depot_count": 9,
+  "nodes_not_reachable_from_depot": [
+    7,
+    8
+  ],
+  "nodes_that_cannot_reach_depot": [],
+  "scc_count": 3,
+  "non_depot_cyclic_scc_count": 0,
+  "non_depot_cyclic_sccs": [],
+  "chosen_solution_diagnostic": {
+    "chosen_arc_ids": [
+      4,
+      27,
+      67,
+      83,
+      97,
+      107,
+      117
+    ],
+    "component_count": 3,
+    "disconnected_component_count": 2,
+    "components": [
+      {
+        "arc_ids": [
+          4,
+          83,
+          27
+        ],
+        "component_nodes": [
+          0,
+          2,
+          5
+        ],
+        "contains_depot_node": true,
+        "starts_at_depot": true,
+        "ends_at_depot": true,
+        "sid_sequence": [
+          "D0",
+          "C9",
+          "S0",
+          "C10",
+          "C3",
+          "C4",
+          "D0"
+        ],
+        "skeleton": [
+          "D0",
+          "C9",
+          "C10",
+          "C3",
+          "C4",
+          "D0"
+        ],
+        "selected_arc_distance": 174.65661895562982,
+        "stitched_sid_distance": 174.65661895562982,
+        "dp_ok": true,
+        "dp_distance": 193.13776994579473,
+        "dp_path": [
+          "D0",
+          "C9",
+          "S0",
+          "C10",
+          "C3",
+          "S15",
+          "C4",
+          "D0"
+        ],
+        "fail_index": null
+      },
+      {
+        "arc_ids": [
+          67,
+          107
+        ],
+        "component_nodes": [
+          1,
+          4
+        ],
+        "contains_depot_node": false,
+        "starts_at_depot": false,
+        "ends_at_depot": false,
+        "sid_sequence": [
+          "C7",
+          "C8",
+          "C1",
+          "C2",
+          "C7"
+        ],
+        "skeleton": [
+          "C7",
+          "C8",
+          "C1",
+          "C2",
+          "C7"
+        ],
+        "selected_arc_distance": 121.6552506059644,
+        "stitched_sid_distance": 121.6552506059644,
+        "dp_ok": true,
+        "dp_distance": 128.34032532331315,
+        "dp_path": [
+          "C7",
+          "C8",
+          "C1",
+          "S5",
+          "C2",
+          "C7"
+        ],
+        "fail_index": null
+      },
+      {
+        "arc_ids": [
+          97,
+          117
+        ],
+        "component_nodes": [
+          3,
+          6
+        ],
+        "contains_depot_node": false,
+        "starts_at_depot": false,
+        "ends_at_depot": false,
+        "sid_sequence": [
+          "C12",
+          "C11",
+          "C6",
+          "C5",
+          "C12"
+        ],
+        "skeleton": [
+          "C12",
+          "C11",
+          "C6",
+          "C5",
+          "C12"
+        ],
+        "selected_arc_distance": 0.0,
+        "stitched_sid_distance": 0.0,
+        "dp_ok": true,
+        "dp_distance": 0.0,
+        "dp_path": [
+          "C12",
+          "C11",
+          "C6",
+          "C5",
+          "C12"
+        ],
+        "fail_index": null
+      }
+    ]
+  }
+}

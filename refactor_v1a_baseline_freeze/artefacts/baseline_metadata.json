@@ -1,10 +1,10 @@
 {
   "artefact_dir": "C:\\Users\\wjvalo\\OneDrive - Queensland Treasury\\Documents\\UQ\\7013\\proj\\New folder\\Fragments_PDPTWEV-Q\\refactor_v1a_baseline_freeze\\artefacts",
-  "copy_only": false,
-  "created_utc": "2026-05-28T12:58:31.966710+00:00",
+  "copy_only": true,
+  "created_utc": "2026-05-30T04:01:15.833926+00:00",
   "legacy_copy_path": "C:\\Users\\wjvalo\\OneDrive - Queensland Treasury\\Documents\\UQ\\7013\\proj\\New folder\\Fragments_PDPTWEV-Q\\refactor_v1a_baseline_freeze\\legacy\\ev_fragmentsv3_legacy.py",
   "legacy_sha256": "049bc2c6cb4d5ed4edccab74a53aa5f46e4077a113078b19f0d2ddaf7ee761b3",
-  "return_code": 0,
+  "return_code": null,
   "source_path": "C:\\Users\\wjvalo\\OneDrive - Queensland Treasury\\Documents\\UQ\\7013\\proj\\New folder\\Fragments_PDPTWEV-Q\\ev_fragmentsv3.py",
   "source_sha256": "049bc2c6cb4d5ed4edccab74a53aa5f46e4077a113078b19f0d2ddaf7ee761b3"
 }

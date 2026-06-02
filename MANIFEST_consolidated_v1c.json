@@ -1,0 +1,16 @@
+{
+  "name": "evrp_fragments_consolidated_v1c",
+  "role": "draft output v1c / builder patch",
+  "behavioural_source": "ev_fragmentsv3.py",
+  "created_by": "M365 Copilot",
+  "files": [
+    "experiments/build_consolidated_v1.py",
+    "README_consolidated_v1c_patch.md",
+    "MANIFEST_consolidated_v1c.json"
+  ],
+  "patch_notes": [
+    "Removes backslash-heavy text from builder module docstring.",
+    "Generated legacy_core.py docstring no longer includes the raw source path.",
+    "SOURCE_PATH and SOURCE_PATH_POSIX retain source information as safe string assignments."
+  ]
+}
