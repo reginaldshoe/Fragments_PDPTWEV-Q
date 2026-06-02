@@ -1,0 +1,18 @@
+{
+  "name": "evrp_fragments_consolidated_v1c_callback_core",
+  "role": "generated derived output / mechanical callback split",
+  "source": "evrp_fragments_consolidated_v1\\legacy_core.py",
+  "source_sha256": "268a9af84b26b04b5669f5fecb58aa08ba01e1cdc8f7d58739ff37f28593f15e",
+  "output": "evrp_fragments_consolidated_v1\\callback_core.py",
+  "function_count": 8,
+  "functions": [
+    "print_dp_path_structure",
+    "dp_leg_frontier_charge_to_full",
+    "dp_route_min_dist",
+    "callback",
+    "extract_routes_from_solution",
+    "route_distance_from_sids",
+    "stitch_sid_sequence",
+    "simulate_route"
+  ]
+}

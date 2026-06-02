@@ -1,0 +1,15 @@
+{
+  "name": "evrp_fragments_consolidated_v1b_master_split_patch2",
+  "role": "draft output v1b patch 2 / master split fix",
+  "created_by": "M365 Copilot",
+  "files": [
+    "evrp_fragments_consolidated_v1/pipeline_v1b.py",
+    "README_consolidated_v1b_master_split_patch2.md",
+    "MANIFEST_consolidated_v1b_master_split_patch2.json"
+  ],
+  "patch_notes": [
+    "Fixes NameError: compute_T_E_L is not defined in master_core.raw_depot_arcs.",
+    "Injects selected fragment_core helper functions into master_core globals before model build.",
+    "Does not alter master_core.py, callback, DP, route tools or formulation."
+  ]
+}

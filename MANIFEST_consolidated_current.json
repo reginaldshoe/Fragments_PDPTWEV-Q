@@ -1,0 +1,51 @@
+{
+  "name": "evrp_fragments_consolidated_current",
+  "role": "current canonical baseline manifest",
+  "canonical_stage": "v1f canonical runner after v1e runtime path",
+  "active_entrypoints": [
+    "experiments/run_solver_consolidated.py",
+    "experiments/regression_consolidated_c101C6_2.py"
+  ],
+  "active_runtime_modules": [
+    "evrp_fragments_consolidated_v1/fragment_core.py",
+    "evrp_fragments_consolidated_v1/master_core.py",
+    "evrp_fragments_consolidated_v1/callback_core.py",
+    "evrp_fragments_consolidated_v1/dependency_bridge.py",
+    "evrp_fragments_consolidated_v1/pipeline_v1e.py",
+    "evrp_fragments_consolidated_v1/pipeline.py"
+  ],
+  "provenance_reference": [
+    "ev_fragmentsv3.py",
+    "evrp_fragments_consolidated_v1/legacy_core.py",
+    "evrp_fragments_parity_v2/"
+  ],
+  "reference_regression": {
+    "instance": "instances/c101C6_2.txt",
+    "max_base_path_len": 18,
+    "k_max": 1,
+    "force_exact_k": true,
+    "use_callback": true,
+    "objective": 376.07267704045523,
+    "theta": 65.73276248806948,
+    "selected_arc_ids": [
+      4,
+      12,
+      27,
+      67,
+      91,
+      103
+    ],
+    "status": 2,
+    "counts": {
+      "base_paths": 126,
+      "restricted_raw": 450,
+      "restricted_dedup": 210,
+      "restricted_meta": 210,
+      "restricted_undominated": 28,
+      "extended_raw": 112,
+      "extended_dedup": 112,
+      "extended_meta": 112,
+      "extended_undominated": 112
+    }
+  }
+}

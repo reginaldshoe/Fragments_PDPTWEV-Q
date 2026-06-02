@@ -1,0 +1,20 @@
+{
+  "name": "evrp_fragments_consolidated_v1c_callback_split",
+  "role": "draft output v1c / mechanical modular split",
+  "depends_on": "evrp_fragments_consolidated_v1b with generated fragment_core.py and master_core.py",
+  "created_by": "M365 Copilot",
+  "files": [
+    "experiments/build_consolidated_v1c_callback.py",
+    "evrp_fragments_consolidated_v1/pipeline_v1c.py",
+    "experiments/run_solver_consolidated_v1c.py",
+    "experiments/regression_consolidated_v1c_callback_c101C6_2.py",
+    "README_consolidated_v1c_callback_split.md",
+    "MANIFEST_consolidated_v1c_callback_split.json"
+  ],
+  "notes": [
+    "Callback/DP/route layer is mechanically extracted from consolidated v1 legacy_core.py.",
+    "Fragment layer uses fragment_core.py from v1a.",
+    "Master layer uses master_core.py from v1b.",
+    "No batch handling included."
+  ]
+}

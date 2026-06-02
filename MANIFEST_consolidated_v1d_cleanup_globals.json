@@ -1,0 +1,19 @@
+{
+  "name": "evrp_fragments_consolidated_v1d_cleanup_globals",
+  "role": "draft output v1d / cleanup globals",
+  "depends_on": "evrp_fragments_consolidated_v1c with generated fragment_core.py, master_core.py and callback_core.py",
+  "created_by": "M365 Copilot",
+  "files": [
+    "evrp_fragments_consolidated_v1/dependency_bridge.py",
+    "evrp_fragments_consolidated_v1/pipeline_v1d.py",
+    "experiments/run_solver_consolidated_v1d.py",
+    "experiments/regression_consolidated_v1d_cleanup_globals_c101C6_2.py",
+    "README_consolidated_v1d_cleanup_globals.md",
+    "MANIFEST_consolidated_v1d_cleanup_globals.json"
+  ],
+  "notes": [
+    "Centralises remaining cross-module global bindings.",
+    "Does not change extracted algorithm bodies.",
+    "No batch handling included."
+  ]
+}

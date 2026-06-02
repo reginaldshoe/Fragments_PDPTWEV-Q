@@ -1,0 +1,14 @@
+{
+  "name": "evrp_fragments_consolidated_v1b_master_core",
+  "role": "generated derived output / mechanical master split",
+  "source": "evrp_fragments_consolidated_v1\\legacy_core.py",
+  "source_sha256": "268a9af84b26b04b5669f5fecb58aa08ba01e1cdc8f7d58739ff37f28593f15e",
+  "output": "evrp_fragments_consolidated_v1\\master_core.py",
+  "function_count": 4,
+  "functions": [
+    "raw_depot_arcs",
+    "build_network",
+    "make_gurobi_env",
+    "build_master_model"
+  ]
+}
