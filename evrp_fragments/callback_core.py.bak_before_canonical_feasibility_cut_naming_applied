@@ -1,0 +1,843 @@
+"""Mechanically extracted callback and DP layer from monolith"""
+
+from __future__ import annotations
+
+from archive.evrp_fragments_consolidated_v1.callback_core import CALLBACK_CORE_GENERATED
+
+CALLBACK_CORE_GENERATED = True
+import math
+
+from pathlib import Path
+
+import os
+
+import gurobipy as gp
+
+from time import perf_counter
+
+from .fragment_core import is_station,step
+
+
+import heapq
+
+DEBUG = False
+
+DEBUG_CALLBACK = False
+
+DEBUG_DIAGNOSTICS = True
+
+FORCE_CHAIN = False
+
+RUN_OPTIONA = True
+
+DIAG_SKELETON = False
+
+DP_MAX_STATION_VISITS_PER_LEG = 6
+
+DP_MAX_LABELS_PER_NODE = 500
+
+def print_dp_path_structure(tag, data, dp_path, dp_dist):
+    stations = [sid for sid in dp_path if is_station(data, sid)]
+    print(f"[{tag}] DP distance = {dp_dist:.6f}")
+    print(f"[{tag}] DP path = {list(dp_path)}")
+    print(f"[{tag}] Stations used ({len(stations)}): {stations}")
+
+def dp_leg_frontier_charge_to_full(data, u_sid, v_sid, t0, E0, max_station_visits=3):
+    """
+    Single skeleton leg u -> v, stations can be inserted.
+    Returns a list of NONDOMINATED arrival labels at v.
+
+    Each label is:
+      (dist_leg, t_start_at_v, E_arr_at_v, path_tuple)
+
+    Stations: always open (no TW).
+    Destination v: TW enforced.
+    Charging: if station visited, charge to full with time (CapE - E_arr)/rech.
+    """
+    sid_to_i = data['sid_to_i']
+    dist_fn  = data['dist']
+    tt_fn    = data['traveltime']
+    en_fn    = data['energy']
+    CapE     = data['CapE']
+    rech     = data['rech']
+    horizon  = data['horizon']
+
+    v_i = sid_to_i[v_sid]
+    v_ready = data['nodes'][v_i][6]
+    v_due   = data['nodes'][v_i][7]
+
+    station_sids = [data['nodes'][i][0] for i in data['S']]
+
+    # PQ state: (dist_so_far, dep_time, -dep_energy, cur_sid, path_tuple, stations_used, visited_stations_frozenset)
+    pq = []
+    heapq.heappush(pq, (0.0, t0, -E0, u_sid, (u_sid,), 0, frozenset()))
+
+    # nondominated labels per intermediate node (including stations): (dist, time, energy)
+    best_at_node = {u_sid: [(0.0, t0, E0)]}
+
+    # nondominated arrivals at v: (dist, t_start, E_arr, path)
+    arrivals = []
+
+    def dominates3(a, b, eps=1e-9):
+        # a,b = (dist, time, energy)
+        da, ta, ea = a
+        db, tb, eb = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def keep_nondominated_list(L, newlab3):
+        # keep nondominated in list of (d,t,e)
+        for lab in L:
+            if dominates3(lab, newlab3):
+                return L, False
+        out = [lab for lab in L if not dominates3(newlab3, lab)]
+        out.append(newlab3)
+        return out, True
+
+    def dominates_arr(a, b, eps=1e-9):
+        # a,b = (dist, t_start, E_arr, path)
+        da, ta, ea, _ = a
+        db, tb, eb, _ = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def keep_arrivals(arrivals, cand):
+        for lab in arrivals:
+            if dominates_arr(lab, cand):
+                return arrivals
+        out = [lab for lab in arrivals if not dominates_arr(cand, lab)]
+        out.append(cand)
+        # optional: sort for neatness
+        out.sort(key=lambda x: (x[0], x[1], -x[2]))
+        return out
+
+    while pq:
+        d_sofar, t_dep, negE, cur_sid, path, k, visitedS = heapq.heappop(pq)
+        E_dep = -negE
+
+        # Explore either go to v, or to a station (if budget remains)
+        next_nodes = [v_sid]
+        if k < max_station_visits:
+            next_nodes += station_sids
+
+        for nxt_sid in next_nodes:
+            if nxt_sid == cur_sid:
+                continue
+            if nxt_sid in visitedS:
+                continue
+
+            ui = sid_to_i[cur_sid]
+            ni = sid_to_i[nxt_sid]
+
+            e_need = en_fn(ui, ni)
+            if e_need > E_dep + 1e-9:
+                continue
+
+            t_arr = t_dep + tt_fn(ui, ni)
+            E_arr = E_dep - e_need
+            d_new = d_sofar + dist_fn(ui, ni)
+
+            if nxt_sid == v_sid:
+                t_start = max(t_arr, v_ready)
+                if t_start > v_due + 1e-9:
+                    continue
+                cand = (d_new, t_start, E_arr, path + (nxt_sid,))
+                arrivals = keep_arrivals(arrivals, cand)
+                continue
+
+            # station
+            if t_arr > horizon + 1e-9:
+                continue
+
+            charge_time = (CapE - E_arr) / rech
+            t_dep2 = t_arr + charge_time
+            E_dep2 = CapE
+
+            lab3 = (d_new, t_dep2, E_dep2)
+            lst = best_at_node.get(nxt_sid, [])
+            lst2, kept = keep_nondominated_list(lst, lab3)
+            if not kept:
+                continue
+            best_at_node[nxt_sid] = lst2
+
+            new_visitedS = visitedS | frozenset([nxt_sid])
+            heapq.heappush(pq, (d_new, t_dep2, -E_dep2, nxt_sid, path + (nxt_sid,), k+1, new_visitedS))
+
+    return arrivals
+
+def dp_route_min_dist(data, skeleton_sids, t0=0.0, E0=None,
+                  max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+                  max_labels_per_node=DP_MAX_LABELS_PER_NODE):
+    """
+    Multi-leg DP over mandatory skeleton nodes (no stations in skeleton_sids).
+    Returns:
+      ok, best_dist, best_full_path_tuple, fail_index
+    fail_index = i means failure on leg skeleton[i] -> skeleton[i+1].
+    """
+    if E0 is None:
+        E0 = data['CapE']
+
+    for sid in skeleton_sids:
+        if is_station(data, sid):
+            raise ValueError(f"skeleton contains station {sid}; filter stations out first")
+
+    sid_to_i = data['sid_to_i']
+
+    # label at mandatory node: (dist_so_far, dep_time, dep_energy, full_path_tuple)
+    def dominates_label(a, b, eps=1e-9):
+        da, ta, ea, _ = a
+        db, tb, eb, _ = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def insert_label(L, newlab):
+        for lab in L:
+            if dominates_label(lab, newlab):
+                return L
+        out = [lab for lab in L if not dominates_label(newlab, lab)]
+        out.append(newlab)
+        out.sort(key=lambda x: (x[0], x[1], -x[2]))
+        return out[:max_labels_per_node]
+
+    start_sid = skeleton_sids[0]
+    labels = {start_sid: [(0.0, t0, E0, (start_sid,))]}
+
+    for i in range(len(skeleton_sids) - 1):
+        u = skeleton_sids[i]
+        v = skeleton_sids[i+1]
+
+        next_labels_for_v = []
+
+        for (d_sofar, t_dep, E_dep, path_sofar) in labels.get(u, []):
+            arrivals = dp_leg_frontier_charge_to_full(
+                data, u, v, t_dep, E_dep,
+                max_station_visits=max_station_visits_per_leg
+            )
+
+            # each arrival is (d_leg, t_start_v, E_arr_v, path_leg)
+            for (d_leg, t_start_v, E_arr_v, path_leg) in arrivals:
+                # service at v
+                v_i = sid_to_i[v]
+                serv_v = data['nodes'][v_i][8]
+                t_dep_v = t_start_v + serv_v
+                E_dep_v = E_arr_v
+
+                # stitch paths (avoid duplicating u)
+                if path_sofar[-1] == path_leg[0]:
+                    stitched = path_sofar + path_leg[1:]
+                else:
+                    stitched = path_sofar + path_leg
+
+                newlab = (d_sofar + d_leg, t_dep_v, E_dep_v, stitched)
+                next_labels_for_v.append(newlab)
+
+        if not next_labels_for_v:
+            return False, None, None, i  # failed on leg i
+
+        L_v = []
+        for lab in next_labels_for_v:
+            L_v = insert_label(L_v, lab)
+        labels[v] = L_v
+
+    final_sid = skeleton_sids[-1]
+    best = min(labels[final_sid], key=lambda x: (x[0], x[1], -x[2]))
+    best_dist, best_t, best_E, best_path = best
+    return True, best_dist, best_path, None
+
+
+# === V3A_FEASIBILITY_CUT_BRANCH_DIAGNOSTICS: start ===
+V3A_FEAS_DIAGNOSTICS = False
+V3A_FEAS_MAX_FRONT_PRUNE_TESTS = 50
+
+def _v3a_feas_arc_seq(arcs, aid):
+    """Return the SID sequence for a selected fragment arc."""
+    a = arcs[aid]
+    if 'seq' in a:
+        return list(a['seq'])
+    if 'Seq' in a:
+        return list(a['Seq'])
+    raise KeyError(f"Arc {aid!r} has no 'seq' or 'Seq' field; keys={list(a.keys())}")
+
+def _v3a_feas_stitch_sid_sequence(route_arc_ids, arcs):
+    """Stitch selected fragment arc SID sequences into one route SID sequence."""
+    sid_seq = []
+    for k, aid in enumerate(route_arc_ids):
+        s = _v3a_feas_arc_seq(arcs, aid)
+        if k == 0:
+            sid_seq = list(s)
+        elif sid_seq and s and sid_seq[-1] == s[0]:
+            sid_seq.extend(s[1:])
+        else:
+            sid_seq.extend(s)
+    return sid_seq
+
+def _v3a_feas_skeleton_and_cover(route_arc_ids, arcs, data):
+    """Build station-free skeleton and map each skeleton edge to route arc position."""
+    arc_skeletons = []
+    for pos, aid in enumerate(route_arc_ids):
+        seq = _v3a_feas_arc_seq(arcs, aid)
+        sk = [sid for sid in seq if not is_station(data, sid)]
+        if sk:
+            arc_skeletons.append((pos, sk))
+
+    if not arc_skeletons:
+        return [], []
+
+    skeleton = list(arc_skeletons[0][1])
+    cover_arc_index = [arc_skeletons[0][0]] * max(0, len(skeleton) - 1)
+
+    for pos, sk in arc_skeletons[1:]:
+        if not sk:
+            continue
+        if skeleton and skeleton[-1] == sk[0]:
+            append_part = sk[1:]
+        else:
+            append_part = sk
+        skeleton.extend(append_part)
+        cover_arc_index.extend([pos] * max(0, len(append_part)))
+
+    expected = max(0, len(skeleton) - 1)
+    if len(cover_arc_index) > expected:
+        cover_arc_index = cover_arc_index[:expected]
+    elif len(cover_arc_index) < expected and arc_skeletons:
+        cover_arc_index.extend([arc_skeletons[-1][0]] * (expected - len(cover_arc_index)))
+
+    return skeleton, cover_arc_index
+
+def _v3a_feas_test_chain(data, arcs, chain_arc_ids):
+    """Return (ok, fail_i, skeleton) for a candidate contiguous selected-arc chain."""
+    sid_seq = _v3a_feas_stitch_sid_sequence(chain_arc_ids, arcs)
+    skeleton = [sid for sid in sid_seq if not is_station(data, sid)]
+    if len(skeleton) < 2:
+        return True, None, skeleton
+    ok, _dp_dist, _dp_full_path, fail_i = dp_route_min_dist(
+        data,
+        skeleton,
+        t0=0.0,
+        E0=data['CapE'],
+        max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+        max_labels_per_node=DP_MAX_LABELS_PER_NODE,
+    )
+    return ok, fail_i, skeleton
+
+def _v3a_feas_diagnose_infeasible_route(route, arcs, data, fail_i):
+    """Diagnostic-only helper for infeasible DP route cases."""
+    try:
+        skeleton, cover_arc_index = _v3a_feas_skeleton_and_cover(route, arcs, data)
+    except Exception as exc:
+        print(f"[V3A-FEAS] unable to build skeleton/cover mapping: {type(exc).__name__}: {exc}")
+        print(f"[V3A-FEAS] route_arc_ids={list(route)}")
+        print(f"[V3A-FEAS] current whole-route cut size={len(route)}")
+        return
+
+    print("[V3A-FEAS] infeasible route detected")
+    print(f"[V3A-FEAS] route_arc_ids={list(route)}")
+    print(f"[V3A-FEAS] route_len={len(route)} skeleton_len={len(skeleton)} fail_i={fail_i}")
+
+    if fail_i is None or fail_i < 0 or fail_i + 1 >= len(skeleton):
+        print("[V3A-FEAS] fail_i is unavailable/out-of-range; diagnostic falls back to whole-route cut context")
+        print(f"[V3A-FEAS] current whole-route cut size={len(route)}")
+        return
+
+    failed_u = skeleton[fail_i]
+    failed_v = skeleton[fail_i + 1]
+    print(f"[V3A-FEAS] failed_skeleton_edge={failed_u}->{failed_v}")
+
+    if fail_i >= len(cover_arc_index):
+        print(f"[V3A-FEAS] cover_arc_index missing fail_i={fail_i}; len(cover_arc_index)={len(cover_arc_index)}")
+        print(f"[V3A-FEAS] current whole-route cut size={len(route)}")
+        return
+
+    covering_arc_pos = cover_arc_index[fail_i]
+    if covering_arc_pos < 0 or covering_arc_pos >= len(route):
+        print(f"[V3A-FEAS] covering_arc_pos out-of-range: {covering_arc_pos}; route_len={len(route)}")
+        print(f"[V3A-FEAS] current whole-route cut size={len(route)}")
+        return
+
+    covering_arc_id = route[covering_arc_pos]
+    prefix = list(route[:covering_arc_pos + 1])
+    print(f"[V3A-FEAS] covering_arc_pos={covering_arc_pos} covering_arc_id={covering_arc_id}")
+    print(f"[V3A-FEAS] current_full_route_cut_size={len(route)}")
+    print(f"[V3A-FEAS] prefix_through_failure_size={len(prefix)} prefix_arc_ids={prefix}")
+
+    best_bad = None
+    tested = 0
+    max_tests = min(len(prefix), V3A_FEAS_MAX_FRONT_PRUNE_TESTS)
+    for start_pos in range(0, max_tests):
+        candidate = list(prefix[start_pos:])
+        if not candidate:
+            continue
+        try:
+            cand_ok, cand_fail_i, cand_skeleton = _v3a_feas_test_chain(data, arcs, candidate)
+        except Exception as exc:
+            print(f"[V3A-FEAS] front_prune_test start_pos={start_pos} candidate_size={len(candidate)} ERROR {type(exc).__name__}: {exc}")
+            continue
+        tested += 1
+        print(
+            f"[V3A-FEAS] front_prune_test start_pos={start_pos} "
+            f"candidate_size={len(candidate)} candidate_ok={cand_ok} "
+            f"candidate_fail_i={cand_fail_i} candidate_skeleton_len={len(cand_skeleton)} "
+            f"candidate_arc_ids={candidate}"
+        )
+        if not cand_ok:
+            best_bad = candidate
+
+    if best_bad is None:
+        print("[V3A-FEAS] no front-pruned infeasible candidate found; current safe cut remains whole route")
+    else:
+        print(f"[V3A-FEAS] smallest_observed_front_pruned_bad_size={len(best_bad)}")
+        print(f"[V3A-FEAS] smallest_observed_front_pruned_bad_arc_ids={best_bad}")
+        print("[V3A-FEAS] diagnostic only: active lazy cut remains unchanged in v3a")
+    print(f"[V3A-FEAS] front_prune_tests_run={tested}")
+# === V3A_FEASIBILITY_CUT_BRANCH_DIAGNOSTICS: end ===
+
+
+# === V3B_GUARDED_FRONT_PRUNED_FEASIBILITY_CUT_DRY_RUN: start ===
+V3B_FEAS_DRY_RUN = False
+V3B_FEAS_DRY_RUN_VERBOSE = False
+V3B_FEAS_MIN_CHAIN_SIZE = 1
+
+def _v3b_feas_find_front_pruned_candidate(route, arcs, data, fail_i):
+    """
+    Return diagnostic candidate information for a guarded front-pruned feasibility cut.
+
+    This is dry-run only. It does not add a cut.
+
+    Guard conditions:
+    - fail_i must identify a valid skeleton edge;
+    - the failed edge must map to a selected route arc;
+    - the candidate must be a contiguous suffix of the prefix through the failed arc;
+    - the candidate must be re-tested with dp_route_min_dist and remain infeasible;
+    - singleton candidates are not used as proposed cuts in v3b.
+    """
+    out = {
+        "ok": False,
+        "reason": None,
+        "route_size": len(route),
+        "prefix_size": None,
+        "candidate_size": None,
+        "candidate_arcs": None,
+        "failed_edge": None,
+        "covering_arc_pos": None,
+        "covering_arc_id": None,
+        "tests_run": 0,
+        "would_shrink_vs_full": False,
+        "would_shrink_vs_prefix": False,
+    }
+
+    try:
+        skeleton, cover_arc_index = _v3a_feas_skeleton_and_cover(route, arcs, data)
+    except Exception as exc:
+        out["reason"] = f"skeleton_cover_error:{type(exc).__name__}:{exc}"
+        return out
+
+    if fail_i is None or fail_i < 0 or fail_i + 1 >= len(skeleton):
+        out["reason"] = "fail_i_unavailable_or_out_of_range"
+        return out
+
+    out["failed_edge"] = f"{skeleton[fail_i]}->{skeleton[fail_i + 1]}"
+
+    if fail_i >= len(cover_arc_index):
+        out["reason"] = "cover_arc_index_missing_fail_i"
+        return out
+
+    covering_arc_pos = cover_arc_index[fail_i]
+    if covering_arc_pos < 0 or covering_arc_pos >= len(route):
+        out["reason"] = "covering_arc_pos_out_of_range"
+        return out
+
+    out["covering_arc_pos"] = covering_arc_pos
+    out["covering_arc_id"] = route[covering_arc_pos]
+
+    prefix = list(route[:covering_arc_pos + 1])
+    out["prefix_size"] = len(prefix)
+    if len(prefix) < V3B_FEAS_MIN_CHAIN_SIZE:
+        out["reason"] = "prefix_too_short_for_guarded_chain_cut"
+        return out
+
+    best_bad = None
+    max_tests = min(len(prefix), V3A_FEAS_MAX_FRONT_PRUNE_TESTS)
+    for start_pos in range(0, max_tests):
+        candidate = list(prefix[start_pos:])
+        if len(candidate) < V3B_FEAS_MIN_CHAIN_SIZE:
+            continue
+        try:
+            cand_ok, cand_fail_i, cand_skeleton = _v3a_feas_test_chain(data, arcs, candidate)
+        except Exception as exc:
+            if V3B_FEAS_DRY_RUN_VERBOSE:
+                print(
+                    f"[V3B-FEAS-DRY] candidate_test_error start_pos={start_pos} "
+                    f"candidate_size={len(candidate)} error={type(exc).__name__}:{exc}"
+                )
+            continue
+        out["tests_run"] += 1
+        if V3B_FEAS_DRY_RUN_VERBOSE:
+            print(
+                f"[V3B-FEAS-DRY] candidate_test start_pos={start_pos} "
+                f"candidate_size={len(candidate)} candidate_ok={cand_ok} "
+                f"candidate_fail_i={cand_fail_i} candidate_skeleton_len={len(cand_skeleton)} "
+                f"candidate_arc_ids={candidate}"
+            )
+        if not cand_ok:
+            best_bad = candidate
+
+    if best_bad is None:
+        out["reason"] = "no_front_pruned_candidate_retested_infeasible"
+        return out
+
+    out["ok"] = True
+    out["reason"] = "candidate_retested_infeasible"
+    out["candidate_size"] = len(best_bad)
+    out["candidate_arcs"] = list(best_bad)
+    out["would_shrink_vs_full"] = len(best_bad) < len(route)
+    out["would_shrink_vs_prefix"] = len(best_bad) < len(prefix)
+    return out
+
+def _v3b_feas_dry_run(route, arcs, data, fail_i):
+    """Emit compact dry-run diagnostics for a future front-pruned feasibility cut."""
+    info = _v3b_feas_find_front_pruned_candidate(route, arcs, data, fail_i)
+    if not info["ok"]:
+        print(
+            "[V3B-FEAS-DRY] no_guarded_candidate "
+            f"reason={info['reason']} route_size={info['route_size']} "
+            f"prefix_size={info['prefix_size']} tests_run={info['tests_run']} "
+            "active_cut=full_route"
+        )
+        return None
+
+    print(
+        "[V3B-FEAS-DRY] guarded_candidate "
+        f"failed_edge={info['failed_edge']} "
+        f"covering_arc_pos={info['covering_arc_pos']} "
+        f"covering_arc_id={info['covering_arc_id']} "
+        f"full_size={info['route_size']} "
+        f"prefix_size={info['prefix_size']} "
+        f"candidate_size={info['candidate_size']} "
+        f"shrink_vs_full={info['would_shrink_vs_full']} "
+        f"shrink_vs_prefix={info['would_shrink_vs_prefix']} "
+        f"candidate_arcs={info['candidate_arcs']} "
+        "active_cut=full_route"
+    )
+    return info
+# === V3B_GUARDED_FRONT_PRUNED_FEASIBILITY_CUT_DRY_RUN: end ===
+
+# === V3B2_SUPPRESS_V3A_OUTPUT: start ===
+# v3b2 suppresses noisy [V3A-FEAS] output while preserving [V3B-FEAS-DRY].
+# Active feasibility cut remains unchanged: full-route cut is still applied below.
+# === V3B2_SUPPRESS_V3A_OUTPUT: end ===
+
+
+# === V3C_MANUAL_ACTIVE_GUARDED_FEASIBILITY_PATCH: start ===
+V3C_MANUAL_FEAS_ACTIVE = True
+V3C_MANUAL_FEAS_PRINT = False
+# === V3C_MANUAL_ACTIVE_GUARDED_FEASIBILITY_PATCH: end ===
+
+# === V3D_ACTIVE_FEASIBILITY_CUT_SUMMARY_ONLY: start ===
+import atexit
+from collections import Counter
+V3D_FEAS_SUMMARY_ONLY = True
+V3D_FEAS_SUMMARY = {
+    "total": 0,
+    "fallback": 0,
+    "active": 0,
+    "cut_size": Counter(),
+    "full_size": Counter(),
+    "reason": Counter(),
+    "pattern": Counter(),
+}
+
+def _v3d_record_feas_cut(full_size, cut_size, fallback, reason, cut_arcs):
+    V3D_FEAS_SUMMARY["total"] += 1
+    if fallback:
+        V3D_FEAS_SUMMARY["fallback"] += 1
+    else:
+        V3D_FEAS_SUMMARY["active"] += 1
+    V3D_FEAS_SUMMARY["cut_size"][int(cut_size)] += 1
+    V3D_FEAS_SUMMARY["full_size"][int(full_size)] += 1
+    V3D_FEAS_SUMMARY["reason"][str(reason)] += 1
+    V3D_FEAS_SUMMARY["pattern"][tuple(cut_arcs)] += 1
+
+def _v3d_print_feas_summary():
+    s = V3D_FEAS_SUMMARY
+    if s["total"] == 0:
+        print("[V3D-FEAS-SUMMARY] total=0")
+        return
+    print("[V3D-FEAS-SUMMARY] total=" + str(s["total"]) + " active=" + str(s["active"]) + " fallback=" + str(s["fallback"]))
+    print("[V3D-FEAS-SUMMARY] cut_size_distribution=" + str(dict(sorted(s["cut_size"].items()))))
+    print("[V3D-FEAS-SUMMARY] full_size_distribution=" + str(dict(sorted(s["full_size"].items()))))
+    print("[V3D-FEAS-SUMMARY] reason_distribution=" + str(dict(s["reason"].most_common())))
+    print("[V3D-FEAS-SUMMARY] top_cut_patterns=" + str([(list(k), v) for k, v in s["pattern"].most_common(20)]))
+
+atexit.register(_v3d_print_feas_summary)
+# === V3D_ACTIVE_FEASIBILITY_CUT_SUMMARY_ONLY: end ===
+
+# === V3E_DOCUMENT_AND_FREEZE_ACTIVE_FEASIBILITY_CUT: start ===
+# Active guarded front-pruned feasibility cut is frozen at v3d summary-only state.
+# See docs/NOTES_v3e_active_feasibility_cut_freeze.md for validation scope and assumptions.
+# Behaviour is unchanged by v3e.
+# === V3E_DOCUMENT_AND_FREEZE_ACTIVE_FEASIBILITY_CUT: end ===
+
+def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
+    if where != gp.GRB.Callback.MIPSOL:
+        return
+
+    # Selected arcs
+    xsol = model.cbGetSolution(x_vars)
+    choose = [a_id for a_id, val in xsol.items() if val > 0.5]
+    if not choose:
+        return
+
+    # Build successor/predecessor on state nodes
+    out_map = {}
+    in_map = {}
+    for a_id in choose:
+        a = arcs[a_id]
+        out_map.setdefault(a['u'], []).append(a_id)
+        in_map.setdefault(a['v'], []).append(a_id)
+
+    # find cycles that don't touch depot. track visited nodes from depot and see if any chosen arc lies outside.
+    seen_nodes = set([depot_u])
+    stack = [depot_u]
+    while stack:
+        n = stack.pop()
+        for a_id in out_map.get(n, []):
+            v = arcs[a_id]['v']
+            if v not in seen_nodes:
+                seen_nodes.add(v)
+                stack.append(v)
+
+    # any chosen arc with tail not reachable from depot implies a disconnected cycle or subtour
+    bad_cycle_arcs = [a_id for a_id in choose if arcs[a_id]['u'] not in seen_nodes]
+    if bad_cycle_arcs:
+        # cut here b/c all arcs in that subtour can be selected together ie. |S| - 1
+        model.cbLazy(gp.quicksum(x_vars[a_id] for a_id in bad_cycle_arcs) <= len(bad_cycle_arcs) - 1)
+        return
+
+    # extract routes starting from depot
+    routes = []
+    for a_id in out_map.get(depot_u, []):
+        route = [a_id]
+        cur = arcs[a_id]['v']
+        # follow until depot (or dead end)
+        while cur != depot_u:
+            nxts = out_map.get(cur, [])
+            if not nxts:
+                break
+            # integer solution should have 1 outgoing; if multiple, pick one (shouldn't happen)
+            a_id2 = nxts[0]
+            route.append(a_id2)
+            cur = arcs[a_id2]['v']
+            # safety against infinite loops
+            if len(route) > len(choose) + 5:
+                break
+        routes.append(route)
+
+    sid_to_i = data['sid_to_i']
+    dist_fn = data['dist']
+
+    # We'll compute DP-based feasibility/cost per route and aggregate delta_total across all routes
+    delta_total = 0.0
+
+    # Helper: build skeleton and edge->arc mapping from a route arc list
+    def skeleton_and_cover(route_arc_ids):
+        # Build the skeleton nodes in order (stations removed), and map each skeleton edge to the arc index that covers it
+        cover_arc_index = []  # cover_arc_index[j] = index in route_arc_ids of arc covering edge j: skeleton[j]->skeleton[j+1]
+
+        # Build per-arc skeleton subseqs and then align
+        arc_skel = []
+        for idx, a_idid in enumerate(route_arc_ids):
+            seq = arcs[a_id]['seq']
+            sk = [sid for sid in seq if not is_station(data, sid)]
+            # sk should have at least start/end
+            arc_skel.append((idx, sk))
+
+        # Merge in order, tracking edge coverage by arc index
+        # Start with first arc's skeleton
+        if not arc_skel or not arc_skel[0][1]:
+            return [], []
+
+        skeleton = list(arc_skel[0][1])
+
+        # edges in this first arc are covered by arc index 0
+        for _ in range(len(skeleton) - 1):
+            cover_arc_index.append(arc_skel[0][0])
+
+        # Append subsequent arcs, avoiding duplicate join node
+        for (aidx, sk) in arc_skel[1:]:
+            if not sk:
+                continue
+            if skeleton and sk and skeleton[-1] == sk[0]:
+                # append sk[1:]
+                for sid in sk[1:]:
+                    skeleton.append(sid)
+                for _ in range(len(sk) - 1):
+                    cover_arc_index.append(aidx)
+            else:
+                # discontinuity; still append
+                for sid in sk:
+                    skeleton.append(sid)
+                for _ in range(len(sk) - 1):
+                    cover_arc_index.append(aidx)
+
+        return skeleton, cover_arc_index
+
+    # --- process each route ---
+    for route in routes:
+        sid_seq = []
+        for k, aid in enumerate(route):
+            s = arc_by_id[aid]['seq']
+            if k == 0:
+                sid_seq = list(s)
+            else:
+                if sid_seq[-1] == s[0]:
+                    sid_seq.extend(s[1:])
+                else:
+                    sid_seq.extend(s)
+        skeleton = [sid for sid in sid_seq if not is_station(data, sid)]
+        if len(skeleton) < 2:
+            continue
+
+        # Run multi-leg DP: station insertion allowed, objective min distance
+        ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
+            data, skeleton, t0=0.0, E0=data['CapE'],
+            max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+            max_labels_per_node=DP_MAX_LABELS_PER_NODE
+        )
+
+        if DEBUG_CALLBACK:
+            print("DP path:", dp_full_path)
+            print("DP distance:", dp_dist)
+            print("Stations used:", [s for s in dp_full_path if is_station(data, s)])
+            print("Num stations:", sum(is_station(data, s) for s in dp_full_path))
+
+        if not ok:
+            # Active guarded front-pruned feasibility cut.
+            candidate_info = _v3b_feas_find_front_pruned_candidate(route, arcs, data, fail_i)
+            if V3C_MANUAL_FEAS_ACTIVE and candidate_info.get('ok') and candidate_info.get('candidate_arcs') and candidate_info.get('candidate_size', len(route)) < len(route):
+                S_feas = list(candidate_info['candidate_arcs'])
+                fallback = False
+                reason = 'guarded_candidate_active'
+            else:
+                S_feas = list(route)
+                fallback = True
+                reason = candidate_info.get('reason', 'candidate_not_available_or_not_smaller')
+            if V3C_MANUAL_FEAS_PRINT:
+                print('[V3C-FEAS-ACTIVE]', 'cut_size=', len(S_feas), 'full_size=', len(route), 'fallback=', fallback, 'reason=', reason, 'cut_arcs=', S_feas)
+            _v3d_record_feas_cut(len(route), len(S_feas), fallback, reason, S_feas)
+            model.cbLazy(gp.quicksum(x_vars[aid] for aid in S_feas) <= len(S_feas) - 1)
+            return
+
+        # # Feasibility cut: minimal prefix up to failing edge fail_i
+            # # fail_i corresponds to skeleton[fail_i] -> skeleton[fail_i+1]
+            # # cover_arc_idx[j] gives arc-index covering edge j
+            # # prefix must include all arcs up to arc-index cover_arc_idx[fail_i]
+            # if fail_i is None or fail_i >= len(cover_arc_idx):
+            #     # fallback: cut whole route
+            #     S_prefix = route
+            # else:
+            #     max_arcpos = cover_arc_idx[fail_i]
+            #     S_prefix = route[:max_arcpos + 1]
+            # model.cbLazy(gp.quicksum(x_vars[aid] for aid in S_prefix) <= len(S_prefix) - 1)
+            # return  # safe to return after adding a feasibility cut
+
+        # Compute optimistic direct distance for skeleton (no stations)
+        # direct_dist = 0.0
+        # for u_sid, v_sid in zip(skeleton, skeleton[1:]):
+        #     ui = sid_to_i[u_sid]
+        #     vi = sid_to_i[v_sid]
+        #     direct_dist += dist_fn(ui, vi)
+        #
+        # delta = dp_dist - direct_dist
+
+        # Base cost consistent with master objective: sum of Df of chosen arcs on this route
+        base_route_cost = 0.0
+        for aid in route:
+            base_route_cost += arcs[aid]['Df']
+
+        delta = dp_dist - base_route_cost
+
+
+        if DEBUG:
+            print("CALLBACK: delta_total =", delta_total, "choose_arcs =", choose)
+
+        if delta > 1e-6:
+            delta_total += delta
+
+    # --- Optimality cut for whole incumbent ---
+    if delta_total > 1e-6:
+        # Condition on selecting all chosen arcs
+        S = choose
+        model.cbLazy(theta >= delta_total - M*(len(S) - gp.quicksum(x_vars[a] for a in S)))
+
+def extract_routes_from_solution(chosen_arc_ids, arc_by_id, depot_sid='D0'):
+    # index chosen arcs by Start node
+    start_map = {}
+    for aid in chosen_arc_ids:
+        a = arc_by_id[aid]
+        start_map.setdefault(a['Start'], []).append(aid)
+
+    routes = []
+
+    # depot-starting arcs define routes
+    for aid0 in start_map.get(depot_sid, []):
+        route = [aid0]
+        cur_aid = aid0
+        cur_end = arc_by_id[cur_aid]['End']
+
+        while cur_end != depot_sid:
+            nexts = start_map.get(cur_end, [])
+            if len(nexts) != 1:
+                raise RuntimeError(
+                    f"Ambiguous or missing continuation at {cur_end}: {nexts}"
+                )
+            cur_aid = nexts[0]
+            route.append(cur_aid)
+            cur_end = arc_by_id[cur_aid]['End']
+
+        routes.append(route)
+
+    return routes
+
+def route_distance_from_sids(data, sid_seq):
+    dist = data['dist']         # helper from read_instance
+    sid_to_i = data['sid_to_i'] # SID -> node index
+    total = 0.0
+    for u_sid, v_sid in zip(sid_seq, sid_seq[1:]):
+        ui = sid_to_i[u_sid]
+        vi = sid_to_i[v_sid]
+        total += dist(ui, vi)
+    return total
+
+def stitch_sid_sequence(route, arc_by_id):
+    sid_seq = []
+    for k, aid in enumerate(route):
+        s = arc_by_id[aid]['seq']
+        if k == 0:
+            sid_seq = list(s)
+        else:
+            if sid_seq[-1] == s[0]:
+                sid_seq.extend(s[1:])
+            else:
+                sid_seq.extend(s)
+    return sid_seq
+
+def simulate_route(data, sid_seq):
+    st = (
+        (0,),                 # path placeholder
+        0,                    # time
+        frozenset(),          # onboard
+        data['CapE'],         # energy
+        0.0,                  # cost
+        frozenset(),          # visited pickups
+        frozenset(),          # visited deliveries
+        frozenset(),          # visited stations
+        0,                    # last node
+        0.0                   # slack
+    )
+
+    for sid in sid_seq[1:]:
+        j = data['sid_to_i'][sid]
+        st2, reason = step(data, st, j)
+        if st2 is None:
+            return False, sid, reason
+        st = st2
+
+    return True, None, None
+

@@ -1,0 +1,1906 @@
+"""Mechanically extracted callback and DP layer from monolith"""
+
+from __future__ import annotations
+
+CALLBACK_CORE_GENERATED = True
+
+import math
+
+from pathlib import Path
+
+import os
+
+import gurobipy as gp
+
+from time import perf_counter
+
+import heapq
+
+DEBUG = False
+
+DEBUG_CALLBACK = False
+
+DEBUG_DIAGNOSTICS = True
+
+FORCE_CHAIN = False
+
+RUN_OPTIONA = True
+
+DIAG_SKELETON = False
+
+DP_MAX_STATION_VISITS_PER_LEG = 6
+
+DP_MAX_LABELS_PER_NODE = 500
+
+def print_dp_path_structure(tag, data, dp_path, dp_dist):
+    stations = [sid for sid in dp_path if is_station(data, sid)]
+    print(f"[{tag}] DP distance = {dp_dist:.6f}")
+    print(f"[{tag}] DP path = {list(dp_path)}")
+    print(f"[{tag}] Stations used ({len(stations)}): {stations}")
+
+def dp_leg_frontier_charge_to_full(data, u_sid, v_sid, t0, E0, max_station_visits=3):
+    """
+    Single skeleton leg u -> v, stations can be inserted.
+    Returns a list of NONDOMINATED arrival labels at v.
+
+    Each label is:
+      (dist_leg, t_start_at_v, E_arr_at_v, path_tuple)
+
+    Stations: always open (no TW).
+    Destination v: TW enforced.
+    Charging: if station visited, charge to full with time (CapE - E_arr)/rech.
+    """
+    sid_to_i = data['sid_to_i']
+    dist_fn  = data['dist']
+    tt_fn    = data['traveltime']
+    en_fn    = data['energy']
+    CapE     = data['CapE']
+    rech     = data['rech']
+    horizon  = data['horizon']
+
+    v_i = sid_to_i[v_sid]
+    v_ready = data['nodes'][v_i][6]
+    v_due   = data['nodes'][v_i][7]
+
+    station_sids = [data['nodes'][i][0] for i in data['S']]
+
+    # PQ state: (dist_so_far, dep_time, -dep_energy, cur_sid, path_tuple, stations_used, visited_stations_frozenset)
+    pq = []
+    heapq.heappush(pq, (0.0, t0, -E0, u_sid, (u_sid,), 0, frozenset()))
+
+    # nondominated labels per intermediate node (including stations): (dist, time, energy)
+    best_at_node = {u_sid: [(0.0, t0, E0)]}
+
+    # nondominated arrivals at v: (dist, t_start, E_arr, path)
+    arrivals = []
+
+    def dominates3(a, b, eps=1e-9):
+        # a,b = (dist, time, energy)
+        da, ta, ea = a
+        db, tb, eb = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def keep_nondominated_list(L, newlab3):
+        # keep nondominated in list of (d,t,e)
+        for lab in L:
+            if dominates3(lab, newlab3):
+                return L, False
+        out = [lab for lab in L if not dominates3(newlab3, lab)]
+        out.append(newlab3)
+        return out, True
+
+    def dominates_arr(a, b, eps=1e-9):
+        # a,b = (dist, t_start, E_arr, path)
+        da, ta, ea, _ = a
+        db, tb, eb, _ = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def keep_arrivals(arrivals, cand):
+        for lab in arrivals:
+            if dominates_arr(lab, cand):
+                return arrivals
+        out = [lab for lab in arrivals if not dominates_arr(cand, lab)]
+        out.append(cand)
+        # optional: sort for neatness
+        out.sort(key=lambda x: (x[0], x[1], -x[2]))
+        return out
+
+    while pq:
+        d_sofar, t_dep, negE, cur_sid, path, k, visitedS = heapq.heappop(pq)
+        E_dep = -negE
+
+        # Explore either go to v, or to a station (if budget remains)
+        next_nodes = [v_sid]
+        if k < max_station_visits:
+            next_nodes += station_sids
+
+        for nxt_sid in next_nodes:
+            if nxt_sid == cur_sid:
+                continue
+            if nxt_sid in visitedS:
+                continue
+
+            ui = sid_to_i[cur_sid]
+            ni = sid_to_i[nxt_sid]
+
+            e_need = en_fn(ui, ni)
+            if e_need > E_dep + 1e-9:
+                continue
+
+            t_arr = t_dep + tt_fn(ui, ni)
+            E_arr = E_dep - e_need
+            d_new = d_sofar + dist_fn(ui, ni)
+
+            if nxt_sid == v_sid:
+                t_start = max(t_arr, v_ready)
+                if t_start > v_due + 1e-9:
+                    continue
+                cand = (d_new, t_start, E_arr, path + (nxt_sid,))
+                arrivals = keep_arrivals(arrivals, cand)
+                continue
+
+            # station
+            if t_arr > horizon + 1e-9:
+                continue
+
+            charge_time = (CapE - E_arr) / rech
+            t_dep2 = t_arr + charge_time
+            E_dep2 = CapE
+
+            lab3 = (d_new, t_dep2, E_dep2)
+            lst = best_at_node.get(nxt_sid, [])
+            lst2, kept = keep_nondominated_list(lst, lab3)
+            if not kept:
+                continue
+            best_at_node[nxt_sid] = lst2
+
+            new_visitedS = visitedS | frozenset([nxt_sid])
+            heapq.heappush(pq, (d_new, t_dep2, -E_dep2, nxt_sid, path + (nxt_sid,), k+1, new_visitedS))
+
+    return arrivals
+
+def dp_route_min_dist(data, skeleton_sids, t0=0.0, E0=None,
+                  max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+                  max_labels_per_node=DP_MAX_LABELS_PER_NODE):
+    """
+    Multi-leg DP over mandatory skeleton nodes (no stations in skeleton_sids).
+    Returns:
+      ok, best_dist, best_full_path_tuple, fail_index
+    fail_index = i means failure on leg skeleton[i] -> skeleton[i+1].
+    """
+    if E0 is None:
+        E0 = data['CapE']
+
+    for sid in skeleton_sids:
+        if is_station(data, sid):
+            raise ValueError(f"skeleton contains station {sid}; filter stations out first")
+
+    sid_to_i = data['sid_to_i']
+
+    # label at mandatory node: (dist_so_far, dep_time, dep_energy, full_path_tuple)
+    def dominates_label(a, b, eps=1e-9):
+        da, ta, ea, _ = a
+        db, tb, eb, _ = b
+        return (da <= db + eps) and (ta <= tb + eps) and (ea >= eb - eps)
+
+    def insert_label(L, newlab):
+        for lab in L:
+            if dominates_label(lab, newlab):
+                return L
+        out = [lab for lab in L if not dominates_label(newlab, lab)]
+        out.append(newlab)
+        out.sort(key=lambda x: (x[0], x[1], -x[2]))
+        return out[:max_labels_per_node]
+
+    start_sid = skeleton_sids[0]
+    labels = {start_sid: [(0.0, t0, E0, (start_sid,))]}
+
+    for i in range(len(skeleton_sids) - 1):
+        u = skeleton_sids[i]
+        v = skeleton_sids[i+1]
+
+        next_labels_for_v = []
+
+        for (d_sofar, t_dep, E_dep, path_sofar) in labels.get(u, []):
+            arrivals = dp_leg_frontier_charge_to_full(
+                data, u, v, t_dep, E_dep,
+                max_station_visits=max_station_visits_per_leg
+            )
+
+            # each arrival is (d_leg, t_start_v, E_arr_v, path_leg)
+            for (d_leg, t_start_v, E_arr_v, path_leg) in arrivals:
+                # service at v
+                v_i = sid_to_i[v]
+                serv_v = data['nodes'][v_i][8]
+                t_dep_v = t_start_v + serv_v
+                E_dep_v = E_arr_v
+
+                # stitch paths (avoid duplicating u)
+                if path_sofar[-1] == path_leg[0]:
+                    stitched = path_sofar + path_leg[1:]
+                else:
+                    stitched = path_sofar + path_leg
+
+                newlab = (d_sofar + d_leg, t_dep_v, E_dep_v, stitched)
+                next_labels_for_v.append(newlab)
+
+        if not next_labels_for_v:
+            return False, None, None, i  # failed on leg i
+
+        L_v = []
+        for lab in next_labels_for_v:
+            L_v = insert_label(L_v, lab)
+        labels[v] = L_v
+
+    final_sid = skeleton_sids[-1]
+    best = min(labels[final_sid], key=lambda x: (x[0], x[1], -x[2]))
+    best_dist, best_t, best_E, best_path = best
+    return True, best_dist, best_path, None
+
+# --- v2a stronger lazy cut diagnostics helpers ---
+
+
+def _v2a_diag_enabled(model):
+    """Return True when v2a lazy-cut diagnostics should print."""
+    try:
+        env_flag = os.environ.get("EVRP_LAZY_CUT_DIAG", "").strip().lower()
+    except Exception:
+        env_flag = ""
+    if env_flag in {"1", "true", "yes", "on"}:
+        return True
+    return bool(globals().get("DEBUG_DIAGNOSTICS", False))
+
+
+def _v2a_diag_can_print(model):
+    """Rate-limit diagnostics so callback output remains usable."""
+    if not _v2a_diag_enabled(model):
+        return False
+    try:
+        limit = int(os.environ.get("EVRP_LAZY_CUT_DIAG_LIMIT", "20"))
+    except Exception:
+        limit = 20
+    count = getattr(model, "_v2a_lazy_cut_diag_count", 0)
+    if count >= limit:
+        return False
+    setattr(model, "_v2a_lazy_cut_diag_count", count + 1)
+    return True
+
+
+def _v2a_stitch_sid_sequence(route_arc_ids, arc_lookup):
+    """Stitch selected arc SID sequences without duplicating join SIDs."""
+    sid_seq = []
+    for k, aid in enumerate(route_arc_ids):
+        seq = list(arc_lookup[aid]["seq"])
+        if k == 0:
+            sid_seq = list(seq)
+        elif sid_seq and seq and sid_seq[-1] == seq[0]:
+            sid_seq.extend(seq[1:])
+        else:
+            sid_seq.extend(seq)
+    return sid_seq
+
+
+def _v2a_skeleton_and_cover(data, route_arc_ids, arc_lookup):
+    """Build non-station skeleton and map each skeleton edge to a selected arc id."""
+    skeleton = []
+    cover_arc_ids = []
+    for aid in route_arc_ids:
+        seq = list(arc_lookup[aid]["seq"])
+        arc_skel = [sid for sid in seq if not is_station(data, sid)]
+        if not arc_skel:
+            continue
+        if not skeleton:
+            skeleton = list(arc_skel)
+            cover_arc_ids.extend([aid] * max(0, len(arc_skel) - 1))
+            continue
+        if skeleton[-1] == arc_skel[0]:
+            for sid in arc_skel[1:]:
+                skeleton.append(sid)
+                cover_arc_ids.append(aid)
+        else:
+            # Preserve discontinuity evidence rather than hiding it.
+            for sid in arc_skel:
+                if skeleton:
+                    cover_arc_ids.append(aid)
+                skeleton.append(sid)
+    return skeleton, cover_arc_ids
+
+
+def _v2a_dp_check_chain(data, route_arc_ids, arc_lookup):
+    """Run existing DP checker on a contiguous route-arc chain."""
+    skeleton, cover_arc_ids = _v2a_skeleton_and_cover(data, route_arc_ids, arc_lookup)
+    if len(skeleton) < 2:
+        return {
+            "route_arc_ids": list(route_arc_ids),
+            "skeleton": skeleton,
+            "cover_arc_ids": cover_arc_ids,
+            "ok": None,
+            "dp_dist": None,
+            "dp_full_path": None,
+            "fail_i": None,
+            "reason": "skeleton_has_fewer_than_two_nodes",
+        }
+    ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
+        data,
+        skeleton,
+        t0=0.0,
+        E0=data["CapE"],
+        max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+        max_labels_per_node=DP_MAX_LABELS_PER_NODE,
+    )
+    return {
+        "route_arc_ids": list(route_arc_ids),
+        "skeleton": skeleton,
+        "cover_arc_ids": cover_arc_ids,
+        "ok": ok,
+        "dp_dist": dp_dist,
+        "dp_full_path": dp_full_path,
+        "fail_i": fail_i,
+        "reason": None,
+    }
+
+
+def _v2a_find_infeasible_chain_candidates(data, route_arc_ids, arc_lookup):
+    """Find infeasible contiguous selected-arc chains under existing DP logic."""
+    route_arc_ids = list(route_arc_ids)
+    candidates = []
+    n = len(route_arc_ids)
+    for start in range(n):
+        for end in range(start + 1, n + 1):
+            chain = route_arc_ids[start:end]
+            result = _v2a_dp_check_chain(data, chain, arc_lookup)
+            if result["ok"] is False:
+                result["start_pos"] = start
+                result["end_pos_exclusive"] = end
+                result["chain_len"] = len(chain)
+                candidates.append(result)
+    candidates.sort(key=lambda r: (r["chain_len"], r["start_pos"], r["end_pos_exclusive"]))
+    return candidates
+
+
+def _v2a_print_infeasible_route_diagnostics(model, data, route_arc_ids, arc_lookup, fail_i):
+    """Print diagnostic evidence for current infeasible-route cut."""
+    if not _v2a_diag_can_print(model):
+        return
+    route_arc_ids = list(route_arc_ids)
+    stitched_sid_seq = _v2a_stitch_sid_sequence(route_arc_ids, arc_lookup)
+    skeleton, cover_arc_ids = _v2a_skeleton_and_cover(data, route_arc_ids, arc_lookup)
+    failing_edge = None
+    prefix_candidate = None
+    if fail_i is not None and 0 <= fail_i < len(skeleton) - 1:
+        failing_edge = (skeleton[fail_i], skeleton[fail_i + 1])
+        if fail_i < len(cover_arc_ids):
+            failing_aid = cover_arc_ids[fail_i]
+            try:
+                failing_pos = route_arc_ids.index(failing_aid)
+                prefix_candidate = route_arc_ids[:failing_pos + 1]
+            except ValueError:
+                prefix_candidate = None
+    candidates = _v2a_find_infeasible_chain_candidates(data, route_arc_ids, arc_lookup)
+    smallest = candidates[0] if candidates else None
+
+    print("\n[V2A LAZY CUT DIAG] infeasible route detected")
+    print("  current_active_cut_type: whole_route_feasibility_cut")
+    print(f"  current_cut_arcs: {route_arc_ids}")
+    print(f"  stitched_sid_seq: {stitched_sid_seq}")
+    print(f"  skeleton: {skeleton}")
+    print(f"  cover_arc_ids_by_skeleton_edge: {cover_arc_ids}")
+    print(f"  fail_i: {fail_i}")
+    print(f"  failing_skeleton_edge: {failing_edge}")
+    print(f"  prefix_candidate_arcs: {prefix_candidate}")
+    if smallest is None:
+        print("  smallest_infeasible_chain: None found by diagnostic chain scan")
+    else:
+        print("  smallest_infeasible_chain:")
+        print(f"    route_positions: [{smallest['start_pos']}, {smallest['end_pos_exclusive']})")
+        print(f"    arc_ids: {smallest['route_arc_ids']}")
+        print(f"    skeleton: {smallest['skeleton']}")
+        print(f"    fail_i: {smallest['fail_i']}")
+    if len(candidates) > 1:
+        preview = [c["route_arc_ids"] for c in candidates[:5]]
+        print(f"  infeasible_chain_candidates_preview: {preview}")
+    print("  behavioural_change: none; applying existing whole-route cut\n")
+
+# --- v2a3 robust route and optimality diagnostics ---
+
+
+def _v2a_print_route_evaluation_diagnostics(model, data, route_arc_ids, arc_lookup, skeleton, ok, dp_dist, dp_full_path, fail_i, base_route_cost=None, delta=None):
+    """Print diagnostic evidence for each evaluated route, including feasible positive-delta routes."""
+    if not _v2a_diag_can_print(model):
+        return
+    route_arc_ids = list(route_arc_ids)
+    stitched_sid_seq = _v2a_stitch_sid_sequence(route_arc_ids, arc_lookup)
+    skeleton2, cover_arc_ids = _v2a_skeleton_and_cover(data, route_arc_ids, arc_lookup)
+    print("\n[V2A LAZY CUT DIAG] route evaluation")
+    print(f"  route_arc_ids: {route_arc_ids}")
+    print(f"  stitched_sid_seq: {stitched_sid_seq}")
+    print(f"  skeleton_from_callback: {skeleton}")
+    print(f"  skeleton_from_cover_helper: {skeleton2}")
+    print(f"  cover_arc_ids_by_skeleton_edge: {cover_arc_ids}")
+    print(f"  dp_ok: {ok}")
+    print(f"  fail_i: {fail_i}")
+    print(f"  dp_dist: {dp_dist}")
+    print(f"  dp_full_path: {dp_full_path}")
+    print(f"  base_route_cost: {base_route_cost}")
+    print(f"  delta: {delta}")
+    print("  behavioural_change: none; diagnostics only\n")
+
+
+def _v2a_print_optimality_cut_diagnostics(model, choose, delta_total, theta_value=None):
+    """Print evidence for the incumbent-wide theta optimality cut currently generated."""
+    if not _v2a_diag_can_print(model):
+        return
+    print("\n[V2A LAZY CUT DIAG] optimality cut candidate")
+    print("  current_active_cut_type: incumbent_wide_big_m_theta_cut")
+    print(f"  conditioned_arc_set_S: {list(choose)}")
+    print(f"  delta_total: {delta_total}")
+    print(f"  incumbent_theta_value: {theta_value}")
+    print("  behavioural_change: none; applying existing optimality cut if delta_total > tolerance\n")
+
+# --- v2b route-local optimality cut diagnostics ---
+
+def _v2b_theta_value(model, theta):
+    try:
+        return float(model.cbGetSolution(theta))
+    except Exception:
+        return None
+
+def _v2b_candidate_rhs(delta, M, selected_count, selected_sum_value):
+    try:
+        return float(delta) - float(M) * (int(selected_count) - float(selected_sum_value))
+    except Exception:
+        return None
+
+def _v2b_print_route_local_optimality_candidate(model, route, choose, theta, delta, delta_total, base_route_cost, dp_dist, M):
+    if not _v2a_diag_can_print(model):
+        return
+    route = list(route)
+    choose = list(choose)
+    theta_value = _v2b_theta_value(model, theta)
+    route_rhs = _v2b_candidate_rhs(delta, M, len(route), float(len(route)))
+    inc_rhs = _v2b_candidate_rhs(delta_total, M, len(choose), float(len(choose)))
+    route_violation = None if theta_value is None or route_rhs is None else route_rhs - theta_value
+    inc_violation = None if theta_value is None or inc_rhs is None else inc_rhs - theta_value
+    print("\n[V2B ROUTE-LOCAL OPT CUT DIAG] candidate route-local cut")
+    print("  behavioural_change: none; candidate only")
+    print(f"  route_arc_ids: {route}")
+    print(f"  incumbent_arc_set_S_current: {choose}")
+    print(f"  base_route_cost: {base_route_cost}")
+    print(f"  dp_dist: {dp_dist}")
+    print(f"  route_delta: {delta}")
+    print(f"  incumbent_delta_total_so_far_after_route: {delta_total}")
+    print("  current_cut_form: theta >= delta_total - M * (|S_incumbent| - sum x[S_incumbent])")
+    print("  candidate_cut_form: theta >= route_delta - M * (|S_route| - sum x[S_route])")
+    print(f"  candidate_S_route_size: {len(route)}")
+    print(f"  current_S_incumbent_size: {len(choose)}")
+    print(f"  incumbent_theta_value: {theta_value}")
+    print(f"  candidate_route_rhs_at_incumbent: {route_rhs}")
+    print(f"  current_incumbent_rhs_at_incumbent: {inc_rhs}")
+    print(f"  candidate_route_violation_at_incumbent: {route_violation}")
+    print(f"  current_incumbent_violation_at_incumbent: {inc_violation}")
+    print("  interpretation: candidate only; route-local S is smaller if mathematically valid\n")
+
+def _v2b_print_final_incumbent_cut_comparison(model, choose, theta, delta_total, M):
+    if not _v2a_diag_can_print(model):
+        return
+    choose = list(choose)
+    theta_value = _v2b_theta_value(model, theta)
+    rhs = _v2b_candidate_rhs(delta_total, M, len(choose), float(len(choose)))
+    violation = None if theta_value is None or rhs is None else rhs - theta_value
+    print("\n[V2B ROUTE-LOCAL OPT CUT DIAG] incumbent-wide cut comparison")
+    print("  behavioural_change: none; existing incumbent-wide cut remains applied")
+    print(f"  incumbent_arc_set_S: {choose}")
+    print(f"  incumbent_S_size: {len(choose)}")
+    print(f"  delta_total: {delta_total}")
+    print(f"  theta_value: {theta_value}")
+    print(f"  incumbent_rhs_at_incumbent: {rhs}")
+    print(f"  incumbent_violation_at_incumbent: {violation}\n")
+
+# --- v2c chain-local optimality cut diagnostics ---
+
+def _v2c_chain_type(skeleton):
+    """Classify a chain skeleton for diagnostics only."""
+    if not skeleton:
+        return "empty"
+    start = skeleton[0]
+    end = skeleton[-1]
+    if start == "D0" and end == "D0":
+        return "depot_to_depot"
+    if start == "D0":
+        return "depot_prefix"
+    if end == "D0":
+        return "depot_suffix"
+    return "internal_customer_chain"
+
+def _v2c_chain_base_cost(arcs, chain_arc_ids):
+    total = 0.0
+    for aid in chain_arc_ids:
+        total += arcs[aid]["Df"]
+    return total
+
+def _v2c_dp_chain_eval(data, chain_arc_ids, arc_lookup):
+    """Evaluate a contiguous chain skeleton with the existing route DP for diagnostics only."""
+    skeleton, cover_arc_ids = _v2a_skeleton_and_cover(data, chain_arc_ids, arc_lookup)
+    if len(skeleton) < 2:
+        return {
+            "ok": None,
+            "dp_dist": None,
+            "dp_full_path": None,
+            "fail_i": None,
+            "skeleton": skeleton,
+            "cover_arc_ids": cover_arc_ids,
+            "reason": "skeleton_has_fewer_than_two_nodes",
+        }
+    ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
+        data,
+        skeleton,
+        t0=0.0,
+        E0=data["CapE"],
+        max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+        max_labels_per_node=DP_MAX_LABELS_PER_NODE,
+    )
+    return {
+        "ok": ok,
+        "dp_dist": dp_dist,
+        "dp_full_path": dp_full_path,
+        "fail_i": fail_i,
+        "skeleton": skeleton,
+        "cover_arc_ids": cover_arc_ids,
+        "reason": None,
+    }
+
+def _v2c_chain_candidates(data, arcs, route, arc_lookup, max_chain_len=None):
+    """Generate contiguous chain diagnostics for a selected route."""
+    route = list(route)
+    n = len(route)
+    if max_chain_len is None:
+        max_chain_len = n
+    candidates = []
+    for start in range(n):
+        max_end = min(n, start + max_chain_len)
+        for end in range(start + 1, max_end + 1):
+            chain = route[start:end]
+            dp = _v2c_dp_chain_eval(data, chain, arc_lookup)
+            base_cost = _v2c_chain_base_cost(arcs, chain)
+            dp_dist = dp["dp_dist"]
+            chain_delta = None
+            if dp_dist is not None:
+                chain_delta = dp_dist - base_cost
+            candidates.append({
+                "start_pos": start,
+                "end_pos_exclusive": end,
+                "chain_len": len(chain),
+                "chain_arc_ids": list(chain),
+                "chain_type": _v2c_chain_type(dp["skeleton"]),
+                "skeleton": dp["skeleton"],
+                "cover_arc_ids": dp["cover_arc_ids"],
+                "ok": dp["ok"],
+                "fail_i": dp["fail_i"],
+                "base_cost": base_cost,
+                "dp_dist": dp_dist,
+                "chain_delta": chain_delta,
+                "dp_full_path": dp["dp_full_path"],
+                "reason": dp["reason"],
+            })
+    return candidates
+
+def _v2c_positive_delta_key(candidate):
+    delta = candidate.get("chain_delta")
+    if delta is None:
+        delta = -1.0e100
+    # Prefer large positive deltas, then shorter chains, then earlier chains.
+    return (-delta, candidate.get("chain_len", 10**9), candidate.get("start_pos", 10**9))
+
+def _v2c_print_chain_local_optimality_diagnostics(model, data, arcs, route, arc_lookup, route_delta, route_base_cost, route_dp_dist):
+    """Print within-route contiguous-chain optimality diagnostics without applying cuts."""
+    if not _v2a_diag_can_print(model):
+        return
+    route = list(route)
+    # Keep the diagnostic bounded. For current benchmark routes this still covers all chains.
+    try:
+        max_chain_len = int(os.environ.get("EVRP_V2C_MAX_CHAIN_LEN", str(len(route))))
+    except Exception:
+        max_chain_len = len(route)
+    try:
+        preview_limit = int(os.environ.get("EVRP_V2C_PREVIEW_LIMIT", "8"))
+    except Exception:
+        preview_limit = 8
+    candidates = _v2c_chain_candidates(data, arcs, route, arc_lookup, max_chain_len=max_chain_len)
+    positive = [c for c in candidates if c.get("chain_delta") is not None and c["chain_delta"] > 1e-6]
+    positive.sort(key=_v2c_positive_delta_key)
+    smallest_positive = sorted(positive, key=lambda c: (c["chain_len"], -c["chain_delta"], c["start_pos"]))
+    print("\n[V2C CHAIN-LOCAL OPT CUT DIAG] within-route chain scan")
+    print("  behavioural_change: none; candidates only")
+    print("  validity_status: diagnostic_only_not_proven")
+    print(f"  route_arc_ids: {route}")
+    print(f"  route_size: {len(route)}")
+    print(f"  route_base_cost: {route_base_cost}")
+    print(f"  route_dp_dist: {route_dp_dist}")
+    print(f"  route_delta: {route_delta}")
+    print(f"  chain_count_scanned: {len(candidates)}")
+    print(f"  positive_delta_chain_count: {len(positive)}")
+    print(f"  max_chain_len_scanned: {max_chain_len}")
+    if positive:
+        print("  top_positive_delta_chains:")
+        for c in positive[:preview_limit]:
+            print(
+                "    "
+                f"positions=[{c['start_pos']},{c['end_pos_exclusive']}) "
+                f"len={c['chain_len']} type={c['chain_type']} "
+                f"delta={c['chain_delta']} base={c['base_cost']} dp={c['dp_dist']} "
+                f"arcs={c['chain_arc_ids']} skeleton={c['skeleton']}"
+            )
+        print("  smallest_positive_delta_chains:")
+        for c in smallest_positive[:preview_limit]:
+            print(
+                "    "
+                f"positions=[{c['start_pos']},{c['end_pos_exclusive']}) "
+                f"len={c['chain_len']} type={c['chain_type']} "
+                f"delta={c['chain_delta']} arcs={c['chain_arc_ids']} skeleton={c['skeleton']}"
+            )
+    else:
+        print("  positive_delta_chains: none")
+    print("  interpretation: use this to identify smaller within-route structures before applying any chain-local cut\n")
+
+# --- v2d realised path chain delta diagnostics ---
+
+def _v2d_path_distance(data, sid_path):
+    """Distance along an explicit SID path, using the model distance function."""
+    if sid_path is None or len(sid_path) < 2:
+        return 0.0
+    sid_to_i = data["sid_to_i"]
+    dist_fn = data["dist"]
+    total = 0.0
+    for u, v in zip(sid_path[:-1], sid_path[1:]):
+        total += dist_fn(sid_to_i[u], sid_to_i[v])
+    return total
+
+def _v2d_station_list(data, sid_path):
+    """Stations appearing inside an explicit SID path segment."""
+    return [sid for sid in sid_path if is_station(data, sid)]
+
+def _v2d_realised_skeleton_edge_segments(skeleton, dp_full_path):
+    """Map each skeleton edge to the realised subpath inside the full-route DP path."""
+    skeleton = list(skeleton)
+    dp_path = list(dp_full_path) if dp_full_path is not None else []
+    if len(skeleton) < 2 or len(dp_path) < 2:
+        return [], "missing_skeleton_or_dp_path"
+    segments = []
+    pos = 0
+    if dp_path[0] != skeleton[0]:
+        try:
+            pos = dp_path.index(skeleton[0])
+        except ValueError:
+            return [], "skeleton_start_not_in_dp_path"
+    for edge_idx, (u, v) in enumerate(zip(skeleton[:-1], skeleton[1:])):
+        if pos >= len(dp_path) or dp_path[pos] != u:
+            try:
+                pos = dp_path.index(u, pos)
+            except ValueError:
+                return segments, f"edge_start_not_found:{edge_idx}:{u}"
+        end_pos = None
+        for j in range(pos + 1, len(dp_path)):
+            if dp_path[j] == v:
+                end_pos = j
+                break
+        if end_pos is None:
+            return segments, f"edge_end_not_found:{edge_idx}:{u}->{v}"
+        segment = tuple(dp_path[pos:end_pos + 1])
+        segments.append({
+            "edge_idx": edge_idx,
+            "u": u,
+            "v": v,
+            "segment": segment,
+            "start_pos": pos,
+            "end_pos": end_pos,
+        })
+        pos = end_pos
+    return segments, None
+
+def _v2d_realised_arc_allocation(data, arcs, route, arc_lookup, skeleton, dp_full_path):
+    """Allocate realised full-route DP distance back to selected arc ids."""
+    route = list(route)
+    skeleton_from_cover, cover_arc_ids = _v2a_skeleton_and_cover(data, route, arc_lookup)
+    skeleton_matches = list(skeleton_from_cover) == list(skeleton)
+    segments, error = _v2d_realised_skeleton_edge_segments(skeleton, dp_full_path)
+    per_arc = {aid: {
+        "arc_id": aid,
+        "base_Df": float(arcs[aid]["Df"]),
+        "realised_dp_distance": 0.0,
+        "realised_delta": None,
+        "edge_indices": [],
+        "segments": [],
+        "stations": [],
+    } for aid in route}
+    if error is not None:
+        return {
+            "skeleton_from_cover": skeleton_from_cover,
+            "cover_arc_ids": cover_arc_ids,
+            "skeleton_matches": skeleton_matches,
+            "segments": segments,
+            "per_arc": per_arc,
+            "error": error,
+        }
+    for seg in segments:
+        edge_idx = seg["edge_idx"]
+        if edge_idx >= len(cover_arc_ids):
+            continue
+        aid = cover_arc_ids[edge_idx]
+        realised = _v2d_path_distance(data, seg["segment"])
+        per_arc[aid]["realised_dp_distance"] += realised
+        per_arc[aid]["edge_indices"].append(edge_idx)
+        per_arc[aid]["segments"].append(seg["segment"])
+        per_arc[aid]["stations"].extend(_v2d_station_list(data, seg["segment"]))
+    for aid in route:
+        per_arc[aid]["realised_delta"] = per_arc[aid]["realised_dp_distance"] - per_arc[aid]["base_Df"]
+    return {
+        "skeleton_from_cover": skeleton_from_cover,
+        "cover_arc_ids": cover_arc_ids,
+        "skeleton_matches": skeleton_matches,
+        "segments": segments,
+        "per_arc": per_arc,
+        "error": None,
+    }
+
+def _v2d_chain_type_from_positions(route, start, end):
+    if start == 0 and end == len(route):
+        return "depot_to_depot"
+    if start == 0:
+        return "depot_prefix"
+    if end == len(route):
+        return "depot_suffix"
+    return "internal_chain"
+
+def _v2d_realised_chain_candidates(route, per_arc):
+    route = list(route)
+    candidates = []
+    n = len(route)
+    for start in range(n):
+        for end in range(start + 1, n + 1):
+            chain = route[start:end]
+            base = sum(per_arc[aid]["base_Df"] for aid in chain)
+            realised = sum(per_arc[aid]["realised_dp_distance"] for aid in chain)
+            delta = realised - base
+            stations = []
+            edge_indices = []
+            for aid in chain:
+                stations.extend(per_arc[aid]["stations"])
+                edge_indices.extend(per_arc[aid]["edge_indices"])
+            candidates.append({
+                "start_pos": start,
+                "end_pos_exclusive": end,
+                "chain_len": len(chain),
+                "chain_arc_ids": list(chain),
+                "chain_type": _v2d_chain_type_from_positions(route, start, end),
+                "base_cost": base,
+                "realised_dp_distance": realised,
+                "realised_delta": delta,
+                "stations": stations,
+                "edge_indices": edge_indices,
+            })
+    return candidates
+
+def _v2d_print_realised_path_chain_delta_diagnostics(model, data, arcs, route, arc_lookup, skeleton, dp_full_path, route_delta, route_base_cost, route_dp_dist):
+    """Print context-preserving realised DP path allocation diagnostics."""
+    if not _v2a_diag_can_print(model):
+        return
+    route = list(route)
+    try:
+        preview_limit = int(os.environ.get("EVRP_V2D_PREVIEW_LIMIT", "8"))
+    except Exception:
+        preview_limit = 8
+    alloc = _v2d_realised_arc_allocation(data, arcs, route, arc_lookup, skeleton, dp_full_path)
+    print("\n[V2D REALISED PATH CHAIN DELTA DIAG] full-route realised allocation")
+    print("  behavioural_change: none; diagnostics only")
+    print("  validity_status: context_preserving_diagnostic_not_yet_cut")
+    print(f"  route_arc_ids: {route}")
+    print(f"  route_skeleton: {list(skeleton)}")
+    print(f"  dp_full_path: {dp_full_path}")
+    print(f"  route_base_cost: {route_base_cost}")
+    print(f"  route_dp_dist: {route_dp_dist}")
+    print(f"  route_delta: {route_delta}")
+    print(f"  skeleton_matches_cover_helper: {alloc["skeleton_matches"]}")
+    print(f"  allocation_error: {alloc["error"]}")
+    if alloc["error"] is not None:
+        print("  interpretation: allocation failed; do not use this incumbent for chain-local cut design\n")
+        return
+    per_arc = alloc["per_arc"]
+    allocated_realised = sum(per_arc[aid]["realised_dp_distance"] for aid in route)
+    allocated_base = sum(per_arc[aid]["base_Df"] for aid in route)
+    allocated_delta = allocated_realised - allocated_base
+    print(f"  allocated_realised_distance_sum: {allocated_realised}")
+    print(f"  allocated_base_cost_sum: {allocated_base}")
+    print(f"  allocated_delta_sum: {allocated_delta}")
+    print(f"  allocation_delta_gap_vs_route_delta: {allocated_delta - route_delta}")
+    print("  per_arc_realised_allocation:")
+    for aid in route:
+        a = per_arc[aid]
+        print(
+            "    "
+            f"arc={aid} base_Df={a["base_Df"]} realised={a["realised_dp_distance"]} "
+            f"delta={a["realised_delta"]} edges={a["edge_indices"]} "
+            f"stations={a["stations"]} segments={a["segments"]}"
+        )
+    candidates = _v2d_realised_chain_candidates(route, per_arc)
+    positive = [c for c in candidates if c["realised_delta"] > 1e-6]
+    positive.sort(key=lambda c: (-c["realised_delta"], c["chain_len"], c["start_pos"]))
+    smallest = sorted(positive, key=lambda c: (c["chain_len"], -c["realised_delta"], c["start_pos"]))
+    print("  top_realised_positive_chains:")
+    if not positive:
+        print("    none")
+    for c in positive[:preview_limit]:
+        pct = None if abs(route_delta) <= 1e-9 else c["realised_delta"] / route_delta
+        print(
+            "    "
+            f"positions=[{c["start_pos"]},{c["end_pos_exclusive"]}) "
+            f"len={c["chain_len"]} type={c["chain_type"]} "
+            f"delta={c["realised_delta"]} pct_route_delta={pct} "
+            f"base={c["base_cost"]} realised={c["realised_dp_distance"]} "
+            f"arcs={c["chain_arc_ids"]} stations={c["stations"]} edges={c["edge_indices"]}"
+        )
+    print("  smallest_realised_positive_chains:")
+    if not smallest:
+        print("    none")
+    for c in smallest[:preview_limit]:
+        pct = None if abs(route_delta) <= 1e-9 else c["realised_delta"] / route_delta
+        print(
+            "    "
+            f"positions=[{c["start_pos"]},{c["end_pos_exclusive"]}) "
+            f"len={c["chain_len"]} type={c["chain_type"]} "
+            f"delta={c["realised_delta"]} pct_route_delta={pct} "
+            f"arcs={c["chain_arc_ids"]} stations={c["stations"]}"
+        )
+    print("  interpretation: if allocated_delta_sum matches route_delta, these realised chains are better candidates than V2C standalone-chain deltas\n")
+
+# --- v2e repeated realised chain cut candidate diagnostics ---
+
+def _v2e_chain_key(chain_arc_ids):
+    return tuple(int(aid) for aid in chain_arc_ids)
+
+def _v2e_summary_limit():
+    try:
+        return int(os.environ.get("EVRP_V2E_SUMMARY_LIMIT", "8"))
+    except Exception:
+        return 8
+
+def _v2e_min_pct_threshold():
+    try:
+        return float(os.environ.get("EVRP_V2E_MIN_PCT_ROUTE_DELTA", "0.10"))
+    except Exception:
+        return 0.10
+
+def _v2e_min_abs_delta_threshold():
+    try:
+        return float(os.environ.get("EVRP_V2E_MIN_ABS_DELTA", "1e-6"))
+    except Exception:
+        return 1e-6
+
+def _v2e_stats_store(model):
+    if not hasattr(model, "_v2e_repeated_chain_stats") or getattr(model, "_v2e_repeated_chain_stats") is None:
+        setattr(model, "_v2e_repeated_chain_stats", {})
+    return getattr(model, "_v2e_repeated_chain_stats")
+
+def _v2e_record_chain_example(stat, route, candidate, route_delta):
+    examples = stat.setdefault("examples", [])
+    if len(examples) >= 3:
+        return
+    examples.append({
+        "route_arc_ids": list(route),
+        "positions": (candidate["start_pos"], candidate["end_pos_exclusive"]),
+        "realised_delta": candidate["realised_delta"],
+        "pct_route_delta": None if abs(route_delta) <= 1e-9 else candidate["realised_delta"] / route_delta,
+        "stations": list(candidate.get("stations", [])),
+        "edge_indices": list(candidate.get("edge_indices", [])),
+    })
+
+def _v2e_update_repeated_realised_chain_candidates(model, data, arcs, route, arc_lookup, skeleton, dp_full_path, route_delta, route_base_cost, route_dp_dist):
+    """Aggregate realised-chain evidence with compact file-backed output. Diagnostic only."""
+    if not _v2a_diag_can_print(model):
+        return
+    if "_v2d_realised_arc_allocation" not in globals() or "_v2d_realised_chain_candidates" not in globals():
+        return
+    route = list(route)
+    alloc = _v2d_realised_arc_allocation(data, arcs, route, arc_lookup, skeleton, dp_full_path)
+    if alloc.get("error") is not None:
+        return
+    per_arc = alloc["per_arc"]
+    allocated_realised = sum(per_arc[aid]["realised_dp_distance"] for aid in route)
+    allocated_base = sum(per_arc[aid]["base_Df"] for aid in route)
+    allocated_delta = allocated_realised - allocated_base
+    allocation_gap = allocated_delta - route_delta
+    candidates = _v2d_realised_chain_candidates(route, per_arc)
+    min_abs_delta = _v2e_min_abs_delta_threshold()
+    min_pct = _v2e_min_pct_threshold()
+    stats = _v2e_stats_store(model)
+    retained = []
+    for c in candidates:
+        delta = c["realised_delta"]
+        pct = None if abs(route_delta) <= 1e-9 else delta / route_delta
+        if delta <= min_abs_delta:
+            continue
+        if pct is not None and pct < min_pct:
+            continue
+        key = _v2e_chain_key(c["chain_arc_ids"])
+        stat = stats.setdefault(key, {
+            "chain_arc_ids": list(key),
+            "seen_count": 0,
+            "sum_realised_delta": 0.0,
+            "max_realised_delta": None,
+            "min_realised_delta": None,
+            "max_pct_route_delta": None,
+            "min_chain_len": len(key),
+            "chain_types": set(),
+            "station_mentions": {},
+            "examples": [],
+        })
+        stat["seen_count"] += 1
+        stat["sum_realised_delta"] += delta
+        stat["max_realised_delta"] = delta if stat["max_realised_delta"] is None else max(stat["max_realised_delta"], delta)
+        stat["min_realised_delta"] = delta if stat["min_realised_delta"] is None else min(stat["min_realised_delta"], delta)
+        if pct is not None:
+            stat["max_pct_route_delta"] = pct if stat["max_pct_route_delta"] is None else max(stat["max_pct_route_delta"], pct)
+        stat["min_chain_len"] = min(stat["min_chain_len"], len(key))
+        stat["chain_types"].add(c["chain_type"])
+        for station in c.get("stations", []):
+            stat["station_mentions"][station] = stat["station_mentions"].get(station, 0) + 1
+        _v2e_record_chain_example(stat, route, c, route_delta)
+        retained.append(c)
+    count = getattr(model, "_v2e_incumbent_count", 0) + 1
+    setattr(model, "_v2e_incumbent_count", count)
+    ranked = sorted(stats.values(), key=lambda st: (-st["seen_count"], -(st["max_realised_delta"] or 0.0), st["min_chain_len"], st["chain_arc_ids"]))
+    limit = _v2e_summary_limit()
+    try:
+        summary_path = os.environ.get("EVRP_V2E_SUMMARY_FILE", "evrp_v2e_chain_summary.txt")
+    except Exception:
+        summary_path = "evrp_v2e_chain_summary.txt"
+    lines = []
+    lines.append("[V2E COMPACT REPEATED REALISED CHAIN SUMMARY]")
+    lines.append("behavioural_change: none; aggregation only")
+    lines.append(f"incumbents_seen: {count}")
+    lines.append(f"latest_route_arc_ids: {route}")
+    lines.append(f"latest_route_delta: {route_delta}")
+    lines.append(f"latest_allocated_delta_sum: {allocated_delta}")
+    lines.append(f"latest_allocation_delta_gap_vs_route_delta: {allocation_gap}")
+    lines.append(f"latest_candidates_retained: {len(retained)}")
+    lines.append(f"unique_candidate_chains_seen_so_far: {len(stats)}")
+    lines.append(f"filter_min_abs_delta: {min_abs_delta}")
+    lines.append(f"filter_min_pct_route_delta: {min_pct}")
+    lines.append("top_repeated_chain_candidates:")
+    if not ranked:
+        lines.append("  none")
+    for st in ranked[:limit]:
+        mean_delta = st["sum_realised_delta"] / st["seen_count"] if st["seen_count"] else None
+        station_summary = sorted(st["station_mentions"].items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        lines.append(
+            "  "
+            f"chain={st['chain_arc_ids']} seen={st['seen_count']} "
+            f"mean_delta={mean_delta} max_delta={st['max_realised_delta']} "
+            f"min_delta={st['min_realised_delta']} max_pct={st['max_pct_route_delta']} "
+            f"types={sorted(st['chain_types'])} stations={station_summary}"
+        )
+        for ex in st.get("examples", [])[:2]:
+            lines.append(
+                "    "
+                f"example_route={ex['route_arc_ids']} positions={ex['positions']} "
+                f"delta={ex['realised_delta']} pct={ex['pct_route_delta']} stations={ex['stations']}"
+            )
+    lines.append("interpretation: repeated small chains with high stable realised deltas are candidates for a future guarded cut diagnostic, not yet a cut")
+    try:
+        with open(summary_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+    console_flag = os.environ.get("EVRP_V2E_CONSOLE", "0").strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        print_every = int(os.environ.get("EVRP_V2E_PRINT_EVERY", "0"))
+    except Exception:
+        print_every = 0
+    should_print = console_flag or (print_every > 0 and count % print_every == 0)
+    if should_print:
+        print("\n" + "\n".join(lines[:12]))
+        print(f"summary_file: {summary_path}\n")
+# --- v2f guarded observed chain cut dry-run diagnostics ---
+
+def _v2f_env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except Exception:
+        return default
+
+
+def _v2f_env_float(name, default):
+    try:
+        return float(os.environ.get(name, str(default)))
+    except Exception:
+        return default
+
+
+def _v2f_env_bool(name, default=False):
+    try:
+        raw = os.environ.get(name, "1" if default else "0").strip().lower()
+    except Exception:
+        raw = "1" if default else "0"
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _v2f_theta_value(model, theta):
+    try:
+        return float(model.cbGetSolution(theta))
+    except Exception:
+        return None
+
+
+def _v2f_station_summary(station_mentions):
+    try:
+        return sorted(station_mentions.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    except Exception:
+        return []
+
+
+def _v2f_candidate_reason(stat, choose_set, min_seen, min_delta, max_len, max_abs_spread, max_spread_ratio, include_depot_prefix):
+    chain = list(stat.get("chain_arc_ids", []))
+    seen = int(stat.get("seen_count", 0))
+    min_observed = stat.get("min_realised_delta")
+    max_observed = stat.get("max_realised_delta")
+    chain_len = len(chain)
+    chain_types = set(stat.get("chain_types", set()))
+    if chain_len == 0:
+        return False, "empty_chain"
+    if not all(aid in choose_set for aid in chain):
+        return False, "inactive_in_current_incumbent"
+    if seen < min_seen:
+        return False, f"seen_below_threshold:{seen}<{min_seen}"
+    if min_observed is None or min_observed < min_delta:
+        return False, f"min_delta_below_threshold:{min_observed}<{min_delta}"
+    if chain_len > max_len:
+        return False, f"chain_len_above_threshold:{chain_len}>{max_len}"
+    if (not include_depot_prefix) and chain_types == {"depot_prefix"}:
+        return False, "depot_prefix_excluded"
+    if min_observed is None or max_observed is None:
+        return False, "missing_delta_bounds"
+    spread = max_observed - min_observed
+    spread_ratio = spread / max(abs(min_observed), 1e-9)
+    if spread > max_abs_spread and spread_ratio > max_spread_ratio:
+        return False, f"unstable_delta_spread:{spread};ratio:{spread_ratio}"
+    return True, "included"
+
+
+def _v2f_guarded_observed_chain_cut_dry_run(model, choose, theta, M, delta_total):
+    """Dry-run candidate chain cuts from observed V2E stats. Does not add cbLazy."""
+    if not _v2a_diag_can_print(model):
+        return
+    if "_v2e_stats_store" not in globals():
+        return
+    stats = _v2e_stats_store(model)
+    choose = list(choose)
+    choose_set = set(choose)
+    theta_value = _v2f_theta_value(model, theta)
+
+    min_seen = _v2f_env_int("EVRP_V2F_MIN_SEEN", 50)
+    min_delta = _v2f_env_float("EVRP_V2F_MIN_DELTA", 10.0)
+    max_len = _v2f_env_int("EVRP_V2F_MAX_CHAIN_LEN", 3)
+    max_abs_spread = _v2f_env_float("EVRP_V2F_MAX_ABS_SPREAD", 1e-6)
+    max_spread_ratio = _v2f_env_float("EVRP_V2F_MAX_SPREAD_RATIO", 0.05)
+    include_depot_prefix = _v2f_env_bool("EVRP_V2F_INCLUDE_DEPOT_PREFIX", True)
+    limit = _v2f_env_int("EVRP_V2F_SUMMARY_LIMIT", 12)
+    tol = _v2f_env_float("EVRP_V2F_VIOLATION_TOL", 1e-6)
+
+    included = []
+    excluded_reasons = {}
+    for stat in stats.values():
+        ok, reason = _v2f_candidate_reason(stat, choose_set, min_seen, min_delta, max_len, max_abs_spread, max_spread_ratio, include_depot_prefix)
+        if not ok:
+            excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
+            continue
+        observed_lb = float(stat["min_realised_delta"])
+        chain = list(stat["chain_arc_ids"])
+        rhs_at_incumbent = observed_lb
+        violation = None if theta_value is None else rhs_at_incumbent - theta_value
+        would_cut = False if violation is None else violation > tol
+        spread = float(stat["max_realised_delta"] - stat["min_realised_delta"])
+        included.append({
+            "chain_arc_ids": chain,
+            "seen_count": stat["seen_count"],
+            "observed_lb_min_delta": observed_lb,
+            "mean_delta": stat["sum_realised_delta"] / stat["seen_count"] if stat["seen_count"] else None,
+            "max_delta": stat["max_realised_delta"],
+            "spread": spread,
+            "max_pct_route_delta": stat.get("max_pct_route_delta"),
+            "chain_types": sorted(stat.get("chain_types", set())),
+            "stations": _v2f_station_summary(stat.get("station_mentions", {})),
+            "rhs_at_incumbent": rhs_at_incumbent,
+            "theta_value": theta_value,
+            "violation": violation,
+            "would_cut": would_cut,
+            "examples": stat.get("examples", [])[:2],
+        })
+
+    included.sort(key=lambda c: (not c["would_cut"], -c["observed_lb_min_delta"], -c["seen_count"], len(c["chain_arc_ids"]), c["chain_arc_ids"]))
+    would_cut_count = sum(1 for c in included if c["would_cut"])
+    count = getattr(model, "_v2f_dry_run_count", 0) + 1
+    setattr(model, "_v2f_dry_run_count", count)
+
+    try:
+        summary_path = os.environ.get("EVRP_V2F_SUMMARY_FILE", "evrp_v2f_candidate_cut_dry_run.txt")
+    except Exception:
+        summary_path = "evrp_v2f_candidate_cut_dry_run.txt"
+
+    lines = []
+    lines.append("[V2F GUARDED OBSERVED CHAIN CUT DRY RUN]")
+    lines.append("behavioural_change: none; no cbLazy calls added")
+    lines.append("cut_form_dry_run: theta >= observed_lb_min_delta - M * (len(S) - sum x[S])")
+    lines.append(f"dry_run_evaluations: {count}")
+    lines.append(f"current_choose: {choose}")
+    lines.append(f"current_delta_total: {delta_total}")
+    lines.append(f"theta_value: {theta_value}")
+    lines.append(f"total_v2e_candidate_stats: {len(stats)}")
+    lines.append(f"included_active_guarded_candidates: {len(included)}")
+    lines.append(f"included_candidates_that_would_cut_current_incumbent: {would_cut_count}")
+    lines.append(f"guards: min_seen={min_seen}, min_delta={min_delta}, max_len={max_len}, max_abs_spread={max_abs_spread}, max_spread_ratio={max_spread_ratio}, include_depot_prefix={include_depot_prefix}, tol={tol}")
+    lines.append(f"excluded_reason_counts: {sorted(excluded_reasons.items(), key=lambda kv: (-kv[1], kv[0]))[:12]}")
+    lines.append("top_guarded_dry_run_candidates:")
+    if not included:
+        lines.append("  none")
+    for c in included[:limit]:
+        lines.append("  " + f"chain={c['chain_arc_ids']} seen={c['seen_count']} observed_lb={c['observed_lb_min_delta']} mean_delta={c['mean_delta']} max_delta={c['max_delta']} spread={c['spread']} max_pct={c['max_pct_route_delta']} types={c['chain_types']} stations={c['stations']} rhs={c['rhs_at_incumbent']} violation={c['violation']} would_cut={c['would_cut']}")
+        for ex in c.get("examples", [])[:2]:
+            lines.append("    " + f"example_route={ex.get('route_arc_ids')} positions={ex.get('positions')} delta={ex.get('realised_delta')} pct={ex.get('pct_route_delta')} stations={ex.get('stations')}")
+    lines.append("interpretation: if stable active candidates repeatedly would cut, next step is proof/guard design, not direct application")
+
+    try:
+        with open(summary_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+
+    console_flag = _v2f_env_bool("EVRP_V2F_CONSOLE", False)
+    print_every = _v2f_env_int("EVRP_V2F_PRINT_EVERY", 0)
+    if console_flag or (print_every > 0 and count % print_every == 0):
+        print("\n" + "\n".join(lines[:14]))
+        print(f"summary_file: {summary_path}\n")
+
+# --- v2g guarded observed chain cut aggregate dry-run diagnostics ---
+
+def _v2g_store(model):
+    if not hasattr(model, "_v2g_aggregate_dry_run") or getattr(model, "_v2g_aggregate_dry_run") is None:
+        setattr(model, "_v2g_aggregate_dry_run", {})
+    return getattr(model, "_v2g_aggregate_dry_run")
+
+
+def _v2g_env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except Exception:
+        return default
+
+
+def _v2g_env_float(name, default):
+    try:
+        return float(os.environ.get(name, str(default)))
+    except Exception:
+        return default
+
+
+def _v2g_env_bool(name, default=False):
+    try:
+        raw = os.environ.get(name, "1" if default else "0").strip().lower()
+    except Exception:
+        raw = "1" if default else "0"
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _v2g_theta_value(model, theta):
+    try:
+        return float(model.cbGetSolution(theta))
+    except Exception:
+        return None
+
+
+def _v2g_station_summary(station_mentions):
+    try:
+        return sorted(station_mentions.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    except Exception:
+        return []
+
+
+def _v2g_candidate_passes_static_guards(stat, min_seen, min_delta, max_len, max_abs_spread, max_spread_ratio, include_depot_prefix):
+    chain = list(stat.get("chain_arc_ids", []))
+    seen = int(stat.get("seen_count", 0))
+    min_observed = stat.get("min_realised_delta")
+    max_observed = stat.get("max_realised_delta")
+    chain_len = len(chain)
+    chain_types = set(stat.get("chain_types", set()))
+    if chain_len == 0:
+        return False, "empty_chain"
+    if seen < min_seen:
+        return False, f"seen_below_threshold:{seen}<{min_seen}"
+    if min_observed is None or min_observed < min_delta:
+        return False, f"min_delta_below_threshold:{min_observed}<{min_delta}"
+    if chain_len > max_len:
+        return False, f"chain_len_above_threshold:{chain_len}>{max_len}"
+    if (not include_depot_prefix) and chain_types == {"depot_prefix"}:
+        return False, "depot_prefix_excluded"
+    if min_observed is None or max_observed is None:
+        return False, "missing_delta_bounds"
+    spread = max_observed - min_observed
+    spread_ratio = spread / max(abs(min_observed), 1e-9)
+    if spread > max_abs_spread and spread_ratio > max_spread_ratio:
+        return False, f"unstable_delta_spread:{spread};ratio:{spread_ratio}"
+    return True, "included"
+
+
+def _v2g_update_candidate_record(record, stat, active, would_cut, violation, theta_value):
+    record["evaluated_count"] += 1
+    if active:
+        record["active_count"] += 1
+    if would_cut:
+        record["would_cut_count"] += 1
+        if violation is not None:
+            record["sum_violation_when_cut"] += violation
+            record["max_violation"] = violation if record["max_violation"] is None else max(record["max_violation"], violation)
+    if active and not would_cut:
+        record["redundant_count"] += 1
+    if theta_value is not None:
+        record["last_theta_value"] = theta_value
+    record["last_violation"] = violation
+    record["observed_lb"] = stat.get("min_realised_delta")
+    record["seen_count_from_v2e"] = stat.get("seen_count")
+    record["mean_delta_from_v2e"] = stat.get("sum_realised_delta", 0.0) / stat.get("seen_count", 1) if stat.get("seen_count", 0) else None
+    record["max_delta_from_v2e"] = stat.get("max_realised_delta")
+    record["min_delta_from_v2e"] = stat.get("min_realised_delta")
+    record["spread_from_v2e"] = None
+    if stat.get("max_realised_delta") is not None and stat.get("min_realised_delta") is not None:
+        record["spread_from_v2e"] = stat.get("max_realised_delta") - stat.get("min_realised_delta")
+    record["max_pct_route_delta"] = stat.get("max_pct_route_delta")
+    record["chain_types"] = sorted(stat.get("chain_types", set()))
+    record["stations"] = _v2g_station_summary(stat.get("station_mentions", {}))
+    if len(record["examples"]) < 3:
+        for ex in stat.get("examples", [])[:3]:
+            if ex not in record["examples"]:
+                record["examples"].append(ex)
+                if len(record["examples"]) >= 3:
+                    break
+
+
+def _v2g_guarded_observed_chain_cut_aggregate_dry_run(model, choose, theta, M, delta_total):
+    """Aggregate dry-run usefulness of guarded observed chain cuts. Does not call cbLazy."""
+    if not _v2a_diag_can_print(model):
+        return
+    if "_v2e_stats_store" not in globals():
+        return
+
+    stats = _v2e_stats_store(model)
+    aggregate = _v2g_store(model)
+    choose = list(choose)
+    choose_set = set(choose)
+    theta_value = _v2g_theta_value(model, theta)
+
+    min_seen = _v2g_env_int("EVRP_V2G_MIN_SEEN", 50)
+    min_delta = _v2g_env_float("EVRP_V2G_MIN_DELTA", 10.0)
+    max_len = _v2g_env_int("EVRP_V2G_MAX_CHAIN_LEN", 3)
+    max_abs_spread = _v2g_env_float("EVRP_V2G_MAX_ABS_SPREAD", 1e-6)
+    max_spread_ratio = _v2g_env_float("EVRP_V2G_MAX_SPREAD_RATIO", 0.05)
+    include_depot_prefix = _v2g_env_bool("EVRP_V2G_INCLUDE_DEPOT_PREFIX", True)
+    tol = _v2g_env_float("EVRP_V2G_VIOLATION_TOL", 1e-6)
+    limit = _v2g_env_int("EVRP_V2G_SUMMARY_LIMIT", 16)
+
+    eval_count = getattr(model, "_v2g_dry_run_eval_count", 0) + 1
+    setattr(model, "_v2g_dry_run_eval_count", eval_count)
+
+    excluded_reasons = {}
+    active_this_eval = 0
+    would_cut_this_eval = 0
+
+    for key, stat in stats.items():
+        ok, reason = _v2g_candidate_passes_static_guards(
+            stat, min_seen, min_delta, max_len, max_abs_spread, max_spread_ratio, include_depot_prefix
+        )
+        if not ok:
+            excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
+            continue
+
+        chain = list(stat.get("chain_arc_ids", []))
+        active = all(aid in choose_set for aid in chain)
+        observed_lb = stat.get("min_realised_delta")
+        violation = None
+        would_cut = False
+        if active and observed_lb is not None and theta_value is not None:
+            rhs_at_incumbent = float(observed_lb)
+            violation = rhs_at_incumbent - theta_value
+            would_cut = violation > tol
+        if active:
+            active_this_eval += 1
+        if would_cut:
+            would_cut_this_eval += 1
+
+        rec = aggregate.setdefault(tuple(chain), {
+            "chain_arc_ids": list(chain),
+            "evaluated_count": 0,
+            "active_count": 0,
+            "would_cut_count": 0,
+            "redundant_count": 0,
+            "sum_violation_when_cut": 0.0,
+            "max_violation": None,
+            "last_violation": None,
+            "last_theta_value": None,
+            "observed_lb": observed_lb,
+            "seen_count_from_v2e": stat.get("seen_count"),
+            "mean_delta_from_v2e": None,
+            "max_delta_from_v2e": stat.get("max_realised_delta"),
+            "min_delta_from_v2e": stat.get("min_realised_delta"),
+            "spread_from_v2e": None,
+            "max_pct_route_delta": stat.get("max_pct_route_delta"),
+            "chain_types": sorted(stat.get("chain_types", set())),
+            "stations": _v2g_station_summary(stat.get("station_mentions", {})),
+            "examples": [],
+        })
+        _v2g_update_candidate_record(rec, stat, active, would_cut, violation, theta_value)
+
+    ranked = sorted(
+        aggregate.values(),
+        key=lambda r: (-r["would_cut_count"], -r["active_count"], -(r["max_violation"] or 0.0), len(r["chain_arc_ids"]), r["chain_arc_ids"])
+    )
+
+    try:
+        summary_path = os.environ.get("EVRP_V2G_SUMMARY_FILE", "evrp_v2g_candidate_cut_aggregate.txt")
+    except Exception:
+        summary_path = "evrp_v2g_candidate_cut_aggregate.txt"
+
+    lines = []
+    lines.append("[V2G GUARDED OBSERVED CHAIN CUT AGGREGATE DRY RUN]")
+    lines.append("behavioural_change: none; no cbLazy calls added")
+    lines.append("cut_form_dry_run: theta >= observed_lb_min_delta - M * (len(S) - sum x[S])")
+    lines.append(f"dry_run_evaluations: {eval_count}")
+    lines.append(f"latest_choose: {choose}")
+    lines.append(f"latest_delta_total: {delta_total}")
+    lines.append(f"latest_theta_value: {theta_value}")
+    lines.append(f"latest_active_candidates: {active_this_eval}")
+    lines.append(f"latest_would_cut_candidates: {would_cut_this_eval}")
+    lines.append(f"total_static_guarded_candidates_tracked: {len(aggregate)}")
+    lines.append(f"guards: min_seen={min_seen}, min_delta={min_delta}, max_len={max_len}, max_abs_spread={max_abs_spread}, max_spread_ratio={max_spread_ratio}, include_depot_prefix={include_depot_prefix}, tol={tol}")
+    lines.append(f"latest_excluded_reason_counts: {sorted(excluded_reasons.items(), key=lambda kv: (-kv[1], kv[0]))[:12]}")
+    lines.append("top_aggregate_dry_run_candidates:")
+    if not ranked:
+        lines.append("  none")
+    for rec in ranked[:limit]:
+        mean_violation = None
+        if rec["would_cut_count"]:
+            mean_violation = rec["sum_violation_when_cut"] / rec["would_cut_count"]
+        active_rate = rec["active_count"] / eval_count if eval_count else None
+        cut_rate = rec["would_cut_count"] / eval_count if eval_count else None
+        redundant_rate_when_active = rec["redundant_count"] / rec["active_count"] if rec["active_count"] else None
+        lines.append(
+            "  "
+            f"chain={rec['chain_arc_ids']} active={rec['active_count']} would_cut={rec['would_cut_count']} "
+            f"redundant={rec['redundant_count']} active_rate={active_rate} cut_rate={cut_rate} "
+            f"redundant_rate_when_active={redundant_rate_when_active} observed_lb={rec['observed_lb']} "
+            f"mean_violation_when_cut={mean_violation} max_violation={rec['max_violation']} "
+            f"seen_v2e={rec['seen_count_from_v2e']} spread_v2e={rec['spread_from_v2e']} "
+            f"types={rec['chain_types']} stations={rec['stations']}"
+        )
+        for ex in rec.get("examples", [])[:2]:
+            lines.append(
+                "    "
+                f"example_route={ex.get('route_arc_ids')} positions={ex.get('positions')} "
+                f"delta={ex.get('realised_delta')} pct={ex.get('pct_route_delta')} stations={ex.get('stations')}"
+            )
+    lines.append("interpretation: prefer small candidates with high active_count, high would_cut_count, low redundancy, stable observed_lb, and plausible cut-safety context")
+
+    try:
+        with open(summary_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+
+    console_flag = _v2g_env_bool("EVRP_V2G_CONSOLE", False)
+    print_every = _v2g_env_int("EVRP_V2G_PRINT_EVERY", 0)
+    if console_flag or (print_every > 0 and eval_count % print_every == 0):
+        print("\n" + "\n".join(lines[:14]))
+        print(f"summary_file: {summary_path}\n")
+
+# --- v2h candidate arc structure validation diagnostics ---
+
+def _v2h_env_bool(name, default=False):
+    try:
+        raw = os.environ.get(name, "1" if default else "0").strip().lower()
+    except Exception:
+        raw = "1" if default else "0"
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _v2h_env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except Exception:
+        return default
+
+
+def _v2h_candidate_arc_ids():
+    raw = os.environ.get("EVRP_V2H_ARCS", "91,33,42,85,92,41,32,86")
+    out = []
+    for part in raw.replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(int(part))
+        except Exception:
+            pass
+    return out
+
+
+def _v2h_safe_repr(value, max_len=260):
+    try:
+        text = repr(value)
+    except Exception:
+        text = "<repr_failed>"
+    if len(text) > max_len:
+        return text[:max_len] + "...<truncated>"
+    return text
+
+
+def _v2h_arc_dict(arcs, aid):
+    try:
+        arc = arcs[aid]
+    except Exception:
+        return None
+    return arc
+
+
+def _v2h_arc_endpoints(arc):
+    if arc is None:
+        return None, None
+    # Try common key names first. Keep this defensive because arc schema has shifted during refactor.
+    for u_key, v_key in [("u", "v"), ("i", "j"), ("from", "to"), ("tail", "head"), ("start", "end")]:
+        if isinstance(arc, dict) and u_key in arc and v_key in arc:
+            return arc.get(u_key), arc.get(v_key)
+    # Fall back to None rather than inventing structure.
+    return None, None
+
+
+def _v2h_singleton_skeleton(data, arc_lookup, aid):
+    if "_v2a_skeleton_and_cover" not in globals():
+        return None, None, "missing_v2a_skeleton_helper"
+    try:
+        skeleton, cover = _v2a_skeleton_and_cover(data, [aid], arc_lookup)
+        return skeleton, cover, None
+    except Exception as exc:
+        return None, None, f"skeleton_failed:{type(exc).__name__}:{exc}"
+
+
+def _v2h_singleton_realised_probe(data, arcs, arc_lookup, aid):
+    """Best-effort singleton realised probe using installed V2D helpers. Diagnostic only."""
+    if "_v2d_realised_arc_allocation" not in globals():
+        return {"available": False, "reason": "missing_v2d_allocation_helper"}
+    if "dp_route_min_dist" not in globals():
+        return {"available": False, "reason": "missing_dp_route_min_dist"}
+    skeleton, cover, error = _v2h_singleton_skeleton(data, arc_lookup, aid)
+    if error is not None:
+        return {"available": False, "reason": error}
+    if skeleton is None or len(skeleton) < 2:
+        return {"available": False, "reason": "singleton_skeleton_too_short", "skeleton": skeleton, "cover": cover}
+    try:
+        ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
+            data,
+            skeleton,
+            t0=0.0,
+            E0=data["CapE"],
+            max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+            max_labels_per_node=DP_MAX_LABELS_PER_NODE,
+        )
+    except Exception as exc:
+        return {"available": False, "reason": f"singleton_dp_failed:{type(exc).__name__}:{exc}", "skeleton": skeleton, "cover": cover}
+    try:
+        alloc = _v2d_realised_arc_allocation(data, arcs, [aid], arc_lookup, skeleton, dp_full_path)
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": f"singleton_allocation_failed:{type(exc).__name__}:{exc}",
+            "skeleton": skeleton,
+            "cover": cover,
+            "dp_ok": ok,
+            "dp_dist": dp_dist,
+            "dp_full_path": dp_full_path,
+            "fail_i": fail_i,
+        }
+    per_arc = alloc.get("per_arc", {}) if isinstance(alloc, dict) else {}
+    arc_alloc = per_arc.get(aid, {}) if isinstance(per_arc, dict) else {}
+    return {
+        "available": True,
+        "skeleton": skeleton,
+        "cover": cover,
+        "dp_ok": ok,
+        "dp_dist": dp_dist,
+        "dp_full_path": dp_full_path,
+        "fail_i": fail_i,
+        "allocation_error": alloc.get("error") if isinstance(alloc, dict) else None,
+        "realised_dp_distance": arc_alloc.get("realised_dp_distance"),
+        "base_Df": arc_alloc.get("base_Df"),
+        "realised_delta": arc_alloc.get("realised_delta"),
+        "stations": arc_alloc.get("stations"),
+        "segments": arc_alloc.get("segments"),
+        "edge_indices": arc_alloc.get("edge_indices"),
+    }
+
+
+def _v2h_v2e_stat_for_arc(aid):
+    if "_v2e_stats_store" not in globals():
+        return None
+    try:
+        stats = _v2e_stats_store(__v2h_model_ref)  # set by caller for access to model-local store
+    except Exception:
+        return None
+    return stats.get((int(aid),))
+
+
+def _v2h_format_v2e_stat(stat):
+    if not stat:
+        return "None"
+    seen = stat.get("seen_count")
+    min_delta = stat.get("min_realised_delta")
+    max_delta = stat.get("max_realised_delta")
+    spread = None
+    if min_delta is not None and max_delta is not None:
+        spread = max_delta - min_delta
+    mean_delta = None
+    if stat.get("seen_count"):
+        mean_delta = stat.get("sum_realised_delta", 0.0) / stat.get("seen_count")
+    station_summary = []
+    try:
+        station_summary = sorted(stat.get("station_mentions", {}).items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    except Exception:
+        pass
+    return f"seen={seen}, mean_delta={mean_delta}, min_delta={min_delta}, max_delta={max_delta}, spread={spread}, max_pct={stat.get('max_pct_route_delta')}, types={sorted(stat.get('chain_types', set()))}, stations={station_summary}"
+
+
+def _v2h_candidate_arc_structure_validation(model, data, arcs, arc_lookup, choose):
+    """Validate structure of top candidate arcs. Diagnostic only."""
+    if not _v2a_diag_can_print(model):
+        return
+    global __v2h_model_ref
+    __v2h_model_ref = model
+
+    count = getattr(model, "_v2h_structure_validation_count", 0) + 1
+    setattr(model, "_v2h_structure_validation_count", count)
+
+    # Avoid repeated work/noise. Arc structure is static for a run; V2E stats keep evolving, so allow a refresh cadence.
+    refresh_every = _v2h_env_int("EVRP_V2H_REFRESH_EVERY", 0)
+    already_ran = getattr(model, "_v2h_structure_validation_ran", False)
+    if already_ran and not (refresh_every > 0 and count % refresh_every == 0):
+        return
+    setattr(model, "_v2h_structure_validation_ran", True)
+
+    candidate_arcs = _v2h_candidate_arc_ids()
+    choose_set = set(choose)
+    try:
+        summary_path = os.environ.get("EVRP_V2H_SUMMARY_FILE", "evrp_v2h_candidate_arc_structure.txt")
+    except Exception:
+        summary_path = "evrp_v2h_candidate_arc_structure.txt"
+
+    lines = []
+    lines.append("[V2H CANDIDATE ARC STRUCTURE VALIDATION]")
+    lines.append("behavioural_change: none; structure/proof-support diagnostic only")
+    lines.append(f"validation_invocation: {count}")
+    lines.append(f"candidate_arcs: {candidate_arcs}")
+    lines.append(f"current_choose: {list(choose)}")
+    lines.append("purpose: inspect whether top singleton candidate arcs have stable, fragment-local structure that could support a smaller-chain cut")
+    lines.append("caution: this diagnostic does not prove validity; it surfaces arc metadata, singleton skeletons, and best-effort singleton realised probes")
+    lines.append("")
+
+    for aid in candidate_arcs:
+        arc = _v2h_arc_dict(arcs, aid)
+        u, v = _v2h_arc_endpoints(arc)
+        skeleton, cover, skel_error = _v2h_singleton_skeleton(data, arc_lookup, aid)
+        singleton_probe = _v2h_singleton_realised_probe(data, arcs, arc_lookup, aid)
+        v2e_stat = None
+        try:
+            v2e_stat = _v2e_stats_store(model).get((int(aid),)) if "_v2e_stats_store" in globals() else None
+        except Exception:
+            v2e_stat = None
+        lines.append(f"arc_id: {aid}")
+        lines.append(f"  active_in_current_choose: {aid in choose_set}")
+        lines.append(f"  arc_present: {arc is not None}")
+        if isinstance(arc, dict):
+            lines.append(f"  arc_keys: {sorted(list(arc.keys()))}")
+            lines.append(f"  endpoint_guess: ({u}, {v})")
+            lines.append(f"  Df: {arc.get('Df')}")
+            lines.append(f"  arc_repr: {_v2h_safe_repr(arc)}")
+        else:
+            lines.append(f"  arc_repr: {_v2h_safe_repr(arc)}")
+        lines.append(f"  singleton_skeleton_error: {skel_error}")
+        lines.append(f"  singleton_skeleton: {skeleton}")
+        lines.append(f"  singleton_cover_arc_ids: {cover}")
+        lines.append(f"  v2e_singleton_stat: {_v2h_format_v2e_stat(v2e_stat)}")
+        lines.append(f"  singleton_realised_probe: {_v2h_safe_repr(singleton_probe, max_len=1200)}")
+        lines.append("  structural_validity_status: not_proven")
+        lines.append("  next_question: does this arc force the reported station insertion/lower-bound independent of upstream and downstream context?")
+        lines.append("")
+
+    try:
+        with open(summary_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+
+    console_flag = _v2h_env_bool("EVRP_V2H_CONSOLE", False)
+    if console_flag:
+        print("\n" + "\n".join(lines[:20]))
+        print(f"summary_file: {summary_path}\n")
+
+def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
+    if where != gp.GRB.Callback.MIPSOL:
+        return
+
+    # Selected arcs
+    xsol = model.cbGetSolution(x_vars)
+    choose = [a_id for a_id, val in xsol.items() if val > 0.5]
+    if not choose:
+        return
+
+    # Build successor/predecessor on state nodes
+    out_map = {}
+    in_map = {}
+    for a_id in choose:
+        a = arcs[a_id]
+        out_map.setdefault(a['u'], []).append(a_id)
+        in_map.setdefault(a['v'], []).append(a_id)
+
+    # find cycles that don't touch depot. track visited nodes from depot and see if any chosen arc lies outside.
+    seen_nodes = set([depot_u])
+    stack = [depot_u]
+    while stack:
+        n = stack.pop()
+        for a_id in out_map.get(n, []):
+            v = arcs[a_id]['v']
+            if v not in seen_nodes:
+                seen_nodes.add(v)
+                stack.append(v)
+
+    # any chosen arc with tail not reachable from depot implies a disconnected cycle or subtour
+    bad_cycle_arcs = [a_id for a_id in choose if arcs[a_id]['u'] not in seen_nodes]
+    if bad_cycle_arcs:
+        # cut here b/c all arcs in that subtour can be selected together ie. |S| - 1
+        model.cbLazy(gp.quicksum(x_vars[a_id] for a_id in bad_cycle_arcs) <= len(bad_cycle_arcs) - 1)
+        return
+
+    # extract routes starting from depot
+    routes = []
+    for a_id in out_map.get(depot_u, []):
+        route = [a_id]
+        cur = arcs[a_id]['v']
+        # follow until depot (or dead end)
+        while cur != depot_u:
+            nxts = out_map.get(cur, [])
+            if not nxts:
+                break
+            # integer solution should have 1 outgoing; if multiple, pick one (shouldn't happen)
+            a_id2 = nxts[0]
+            route.append(a_id2)
+            cur = arcs[a_id2]['v']
+            # safety against infinite loops
+            if len(route) > len(choose) + 5:
+                break
+        routes.append(route)
+
+    sid_to_i = data['sid_to_i']
+    dist_fn = data['dist']
+
+    # We'll compute DP-based feasibility/cost per route and aggregate delta_total across all routes
+    delta_total = 0.0
+
+    # Helper: build skeleton and edge->arc mapping from a route arc list
+    def skeleton_and_cover(route_arc_ids):
+        # Build the skeleton nodes in order (stations removed), and map each skeleton edge to the arc index that covers it
+        cover_arc_index = []  # cover_arc_index[j] = index in route_arc_ids of arc covering edge j: skeleton[j]->skeleton[j+1]
+
+        # Build per-arc skeleton subseqs and then align
+        arc_skel = []
+        for idx, a_idid in enumerate(route_arc_ids):
+            seq = arcs[a_id]['seq']
+            sk = [sid for sid in seq if not is_station(data, sid)]
+            # sk should have at least start/end
+            arc_skel.append((idx, sk))
+
+        # Merge in order, tracking edge coverage by arc index
+        # Start with first arc's skeleton
+        if not arc_skel or not arc_skel[0][1]:
+            return [], []
+
+        skeleton = list(arc_skel[0][1])
+
+        # edges in this first arc are covered by arc index 0
+        for _ in range(len(skeleton) - 1):
+            cover_arc_index.append(arc_skel[0][0])
+
+        # Append subsequent arcs, avoiding duplicate join node
+        for (aidx, sk) in arc_skel[1:]:
+            if not sk:
+                continue
+            if skeleton and sk and skeleton[-1] == sk[0]:
+                # append sk[1:]
+                for sid in sk[1:]:
+                    skeleton.append(sid)
+                for _ in range(len(sk) - 1):
+                    cover_arc_index.append(aidx)
+            else:
+                # discontinuity; still append
+                for sid in sk:
+                    skeleton.append(sid)
+                for _ in range(len(sk) - 1):
+                    cover_arc_index.append(aidx)
+
+        return skeleton, cover_arc_index
+
+    # --- process each route ---
+    for route in routes:
+        sid_seq = []
+        for k, aid in enumerate(route):
+            s = arc_by_id[aid]['seq']
+            if k == 0:
+                sid_seq = list(s)
+            else:
+                if sid_seq[-1] == s[0]:
+                    sid_seq.extend(s[1:])
+                else:
+                    sid_seq.extend(s)
+        skeleton = [sid for sid in sid_seq if not is_station(data, sid)]
+        if len(skeleton) < 2:
+            continue
+
+        # Run multi-leg DP: station insertion allowed, objective min distance
+        ok, dp_dist, dp_full_path, fail_i = dp_route_min_dist(
+            data, skeleton, t0=0.0, E0=data['CapE'],
+            max_station_visits_per_leg=DP_MAX_STATION_VISITS_PER_LEG,
+            max_labels_per_node=DP_MAX_LABELS_PER_NODE
+        )
+
+        if DEBUG_CALLBACK:
+            print("DP path:", dp_full_path)
+            print("DP distance:", dp_dist)
+            print("Stations used:", [s for s in dp_full_path if is_station(data, s)])
+            print("Num stations:", sum(is_station(data, s) for s in dp_full_path))
+
+        if not ok:
+            # v2a diagnostic-only instrumentation.
+            # Behaviour is intentionally unchanged: still apply the existing whole-route cut.
+            _v2a_print_infeasible_route_diagnostics(model, data, route, arc_by_id, fail_i)
+            # For now: cut the whole route (safe, not minimal).
+            # Once diagnostics are validated, v2b can replace this with a stronger chain cut.
+            model.cbLazy(gp.quicksum(x_vars[aid] for aid in route) <= len(route) - 1)
+            return
+
+        # # Feasibility cut: minimal prefix up to failing edge fail_i
+            # # fail_i corresponds to skeleton[fail_i] -> skeleton[fail_i+1]
+            # # cover_arc_idx[j] gives arc-index covering edge j
+            # # prefix must include all arcs up to arc-index cover_arc_idx[fail_i]
+            # if fail_i is None or fail_i >= len(cover_arc_idx):
+            #     # fallback: cut whole route
+            #     S_prefix = route
+            # else:
+            #     max_arcpos = cover_arc_idx[fail_i]
+            #     S_prefix = route[:max_arcpos + 1]
+            # model.cbLazy(gp.quicksum(x_vars[aid] for aid in S_prefix) <= len(S_prefix) - 1)
+            # return  # safe to return after adding a feasibility cut
+
+        # Compute optimistic direct distance for skeleton (no stations)
+        # direct_dist = 0.0
+        # for u_sid, v_sid in zip(skeleton, skeleton[1:]):
+        #     ui = sid_to_i[u_sid]
+        #     vi = sid_to_i[v_sid]
+        #     direct_dist += dist_fn(ui, vi)
+        #
+        # delta = dp_dist - direct_dist
+
+        # Base cost consistent with master objective: sum of Df of chosen arcs on this route
+        base_route_cost = 0.0
+        for aid in route:
+            base_route_cost += arcs[aid]['Df']
+
+        delta = dp_dist - base_route_cost
+
+
+        if DEBUG:
+            print("CALLBACK: delta_total =", delta_total, "choose_arcs =", choose)
+
+        if delta > 1e-6:
+            delta_total += delta
+            _v2e_update_repeated_realised_chain_candidates(
+                model=model,
+                data=data,
+                arcs=arcs,
+                route=route,
+                arc_lookup=arc_by_id,
+                skeleton=skeleton,
+                dp_full_path=dp_full_path,
+                route_delta=delta,
+                route_base_cost=base_route_cost,
+                route_dp_dist=dp_dist,
+            )
+
+        _v2g_guarded_observed_chain_cut_aggregate_dry_run(model, choose, theta, M, delta_total)
+        _v2h_candidate_arc_structure_validation(model, data, arcs, arc_by_id, choose)
+    # --- Optimality cut for whole incumbent ---
+    if delta_total > 1e-6:
+        # Condition on selecting all chosen arcs
+        S = choose
+        try:
+            theta_value = model.cbGetSolution(theta)
+        except Exception:
+            theta_value = None
+        model.cbLazy(theta >= delta_total - M*(len(S) - gp.quicksum(x_vars[a] for a in S)))
+
+def extract_routes_from_solution(chosen_arc_ids, arc_by_id, depot_sid='D0'):
+    # index chosen arcs by Start node
+    start_map = {}
+    for aid in chosen_arc_ids:
+        a = arc_by_id[aid]
+        start_map.setdefault(a['Start'], []).append(aid)
+
+    routes = []
+
+    # depot-starting arcs define routes
+    for aid0 in start_map.get(depot_sid, []):
+        route = [aid0]
+        cur_aid = aid0
+        cur_end = arc_by_id[cur_aid]['End']
+
+        while cur_end != depot_sid:
+            nexts = start_map.get(cur_end, [])
+            if len(nexts) != 1:
+                raise RuntimeError(
+                    f"Ambiguous or missing continuation at {cur_end}: {nexts}"
+                )
+            cur_aid = nexts[0]
+            route.append(cur_aid)
+            cur_end = arc_by_id[cur_aid]['End']
+
+        routes.append(route)
+
+    return routes
+
+def route_distance_from_sids(data, sid_seq):
+    dist = data['dist']         # helper from read_instance
+    sid_to_i = data['sid_to_i'] # SID -> node index
+    total = 0.0
+    for u_sid, v_sid in zip(sid_seq, sid_seq[1:]):
+        ui = sid_to_i[u_sid]
+        vi = sid_to_i[v_sid]
+        total += dist(ui, vi)
+    return total
+
+def stitch_sid_sequence(route, arc_by_id):
+    sid_seq = []
+    for k, aid in enumerate(route):
+        s = arc_by_id[aid]['seq']
+        if k == 0:
+            sid_seq = list(s)
+        else:
+            if sid_seq[-1] == s[0]:
+                sid_seq.extend(s[1:])
+            else:
+                sid_seq.extend(s)
+    return sid_seq
+
+def simulate_route(data, sid_seq):
+    st = (
+        (0,),                 # path placeholder
+        0,                    # time
+        frozenset(),          # onboard
+        data['CapE'],         # energy
+        0.0,                  # cost
+        frozenset(),          # visited pickups
+        frozenset(),          # visited deliveries
+        frozenset(),          # visited stations
+        0,                    # last node
+        0.0                   # slack
+    )
+
+    for sid in sid_seq[1:]:
+        j = data['sid_to_i'][sid]
+        st2, reason = step(data, st, j)
+        if st2 is None:
+            return False, sid, reason
+        st = st2
+
+    return True, None, None
+

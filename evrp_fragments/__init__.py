@@ -1,5 +1,11 @@
-"""Canonical integrated EVRP fragment package."""
-from .data import read_instance
-from .fragments import build_fragment_sets
+"""EVRP fragments package.
 
-__all__ = ["read_instance", "build_fragment_sets"]
+Role: promoted canonical runtime package.
+
+This package was promoted from evrp_fragments_consolidated_v1 after the canonical
+regression gate passed. The public API is run_solver via pipeline.py.
+"""
+
+from .pipeline import run_solver, summary_to_json
+
+__all__ = ["run_solver", "summary_to_json"]
