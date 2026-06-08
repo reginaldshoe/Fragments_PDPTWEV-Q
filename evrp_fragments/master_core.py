@@ -223,6 +223,15 @@ def build_master_model(data, ef_undom, K_max, force_exact_K = False):
     m.Params.LazyConstraints = 1
     m.Params.Threads = 1
     m.Params.OutputFlag = 0
+    _time_limit_raw = os.getenv("EVRP_SOLVER_TIME_LIMIT_SEC", "").strip()
+    if _time_limit_raw:
+        try:
+            _time_limit_sec = float(_time_limit_raw)
+        except ValueError as exc:
+            raise ValueError(f"EVRP_SOLVER_TIME_LIMIT_SEC must be numeric, got {_time_limit_raw!r}") from exc
+        if _time_limit_sec > 0:
+            m.Params.TimeLimit = _time_limit_sec
+            print(f"[SOLVER-CONFIG] TimeLimit={_time_limit_sec}", flush=True)
 
     return m, X, arcs, node_id, depot_u, arc_by_id, theta, M
 

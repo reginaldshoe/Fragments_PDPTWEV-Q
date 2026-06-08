@@ -1,0 +1,13 @@
+[V4Z2_FIX_PROFILE_RUNNER_STEP_DOMINANCE_ARG]
+repo_root=C:\Users\wjvalo\OneDrive - Queensland Treasury\Documents\UQ\7013\proj\New folder\Fragments_PDPTWEV-Q
+runner_path=C:\Users\wjvalo\OneDrive - Queensland Treasury\Documents\UQ\7013\proj\New folder\Fragments_PDPTWEV-Q\experiments\profile_fragment_build.py
+audit_only=False
+replacement_runner_ast_parse_ok=True
+runner_exists_before=True
+runner_changed=True
+removes_enable_step_dominance_reference=True
+imports_fragment_core_after_parse_args=True
+runner_backup_created=C:\Users\wjvalo\OneDrive - Queensland Treasury\Documents\UQ\7013\proj\New folder\Fragments_PDPTWEV-Q\experiments\profile_fragment_build.py.bak_v4z2_fix_profile_runner_step_dominance_arg_20260608_011405
+runner_written=True
+patch_written=True
+scope_note=Profile runner fixed: removed stale step-dominance argument reference and moved fragment_core import after environment setup.

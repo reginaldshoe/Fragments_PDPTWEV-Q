@@ -5,6 +5,7 @@ from .fragment_core import is_station,step
 import gurobipy as gp
 from time import perf_counter
 import heapq
+from collections import Counter
 
 CALLBACK_CORE_GENERATED = True
 
@@ -366,14 +367,345 @@ FEASIBILITY_CUT_DRY_RUN_ENABLED = False
 FEASIBILITY_CUT_VERBOSE_CANDIDATE_TESTS = False
 FEASIBILITY_CUT_MIN_CHAIN_SIZE = 1
 
-def _find_front_pruned_infeasible_chain(route, arcs, data, fail_i):
-    """Return the smallest front-pruned selected-arc chain that retests infeasible.
+FEASIBILITY_CUT_PRUNING_SUMMARY = {
+    "total": 0,
+    "front_prune_success": 0,
+    "front_prune_failure": 0,
+    "route_size": Counter(),
+    "prefix_size": Counter(),
+    "candidate_size": Counter(),
+    "rear_removed": Counter(),
+    "front_removed": Counter(),
+    "reason": Counter(),
+}
+SOLVER_BOUND_SUMMARY = {
+    "snapshots": 0,
+    "best_obj": None,
+    "best_bound": None,
+    "gap": None,
+    "node_count": None,
+    "runtime": None,
+    "last_where": None,
+}
 
-    The candidate is built from the selected route prefix ending at the arc that
-    covers the first failed skeleton edge. Leading arcs are removed one at a
-    time, and each remaining suffix is retested with the route DP. The returned
-    chain is used by the active feasibility cut when it is valid and smaller
-    than the full selected route.
+
+def _record_pruning_summary(route_size, prefix_size, candidate_size, reason, success):
+    s = FEASIBILITY_CUT_PRUNING_SUMMARY
+    s["total"] += 1
+    if success:
+        s["front_prune_success"] += 1
+    else:
+        s["front_prune_failure"] += 1
+    s["route_size"][int(route_size)] += 1
+    if prefix_size is not None:
+        s["prefix_size"][int(prefix_size)] += 1
+        s["rear_removed"][max(0, int(route_size) - int(prefix_size))] += 1
+    if candidate_size is not None:
+        s["candidate_size"][int(candidate_size)] += 1
+        if prefix_size is not None:
+            s["front_removed"][max(0, int(prefix_size) - int(candidate_size))] += 1
+    s["reason"][str(reason)] += 1
+
+
+def _print_pruning_summary():
+    s = FEASIBILITY_CUT_PRUNING_SUMMARY
+    if s["total"] == 0:
+        print("[FEAS-CUT-PRUNING-SUMMARY] total=0")
+        return
+    print("[FEAS-CUT-PRUNING-SUMMARY] total=" + str(s["total"]) + " front_success=" + str(s["front_prune_success"]) + " front_failure=" + str(s["front_prune_failure"]))
+    print("[FEAS-CUT-PRUNING-SUMMARY] route_size_distribution=" + str(dict(sorted(s["route_size"].items()))))
+    print("[FEAS-CUT-PRUNING-SUMMARY] prefix_size_distribution=" + str(dict(sorted(s["prefix_size"].items()))))
+    print("[FEAS-CUT-PRUNING-SUMMARY] candidate_size_distribution=" + str(dict(sorted(s["candidate_size"].items()))))
+    print("[FEAS-CUT-PRUNING-SUMMARY] rear_removed_distribution=" + str(dict(sorted(s["rear_removed"].items()))))
+    print("[FEAS-CUT-PRUNING-SUMMARY] front_removed_distribution=" + str(dict(sorted(s["front_removed"].items()))))
+    print("[FEAS-CUT-PRUNING-SUMMARY] reason_distribution=" + str(dict(s["reason"].most_common())))
+
+
+def _safe_cb_get(model, what):
+    try:
+        return model.cbGet(what)
+    except Exception:
+        return None
+
+
+def _record_solver_bound_snapshot(model, where):
+    s = SOLVER_BOUND_SUMMARY
+    try:
+        if where == gp.GRB.Callback.MIP:
+            best = _safe_cb_get(model, gp.GRB.Callback.MIP_OBJBST)
+            bound = _safe_cb_get(model, gp.GRB.Callback.MIP_OBJBND)
+            node_count = _safe_cb_get(model, gp.GRB.Callback.MIP_NODCNT)
+            runtime = _safe_cb_get(model, gp.GRB.Callback.RUNTIME)
+        elif where == gp.GRB.Callback.MIPSOL:
+            best = _safe_cb_get(model, gp.GRB.Callback.MIPSOL_OBJBST)
+            bound = _safe_cb_get(model, gp.GRB.Callback.MIPSOL_OBJBND)
+            node_count = None
+            runtime = _safe_cb_get(model, gp.GRB.Callback.RUNTIME)
+        else:
+            return
+    except Exception:
+        return
+    s["snapshots"] += 1
+    s["last_where"] = int(where)
+    if best is not None:
+        s["best_obj"] = float(best)
+    if bound is not None:
+        s["best_bound"] = float(bound)
+    if node_count is not None:
+        s["node_count"] = float(node_count)
+    if runtime is not None:
+        s["runtime"] = float(runtime)
+    best_obj = s.get("best_obj")
+    best_bound = s.get("best_bound")
+    if best_obj is not None and best_bound is not None and abs(best_obj) > 1e-12:
+        s["gap"] = abs(best_obj - best_bound) / abs(best_obj)
+
+
+def _print_solver_bound_summary():
+    s = SOLVER_BOUND_SUMMARY
+    print("[SOLVER-BOUNDS-SUMMARY] snapshots=" + str(s["snapshots"]) + " best_obj=" + str(s["best_obj"]) + " best_bound=" + str(s["best_bound"]) + " gap=" + str(s["gap"]) + " node_count=" + str(s["node_count"]) + " runtime=" + str(s["runtime"]))
+
+
+
+
+# Diagnostic-only subtour/cycle lazy-cut instrumentation.
+# Active callback behaviour is unchanged: subtour cuts are still added in the same branch.
+SUBTOUR_CUT_SUMMARY = {
+    "mipsol_callbacks": 0,
+    "subtour_cuts": 0,
+    "returned_before_route_dp": 0,
+    "reached_route_dp": 0,
+    "routes_checked": 0,
+    "bad_cycle_size": Counter(),
+    "chosen_arc_count": Counter(),
+    "route_count": Counter(),
+    "reason": Counter(),
+}
+
+def _record_subtour_mipsol(choose_count):
+    s = SUBTOUR_CUT_SUMMARY
+    s["mipsol_callbacks"] += 1
+    s["chosen_arc_count"][int(choose_count)] += 1
+
+def _record_subtour_cut(bad_cycle_arcs):
+    s = SUBTOUR_CUT_SUMMARY
+    s["subtour_cuts"] += 1
+    s["returned_before_route_dp"] += 1
+    s["bad_cycle_size"][int(len(bad_cycle_arcs))] += 1
+    s["reason"]["disconnected_cycle_or_subtour"] += 1
+
+def _record_route_dp_stage(routes):
+    s = SUBTOUR_CUT_SUMMARY
+    s["reached_route_dp"] += 1
+    s["route_count"][int(len(routes))] += 1
+    s["routes_checked"] += int(len(routes))
+
+# def _print_subtour_cut_summary():
+#     s = SUBTOUR_CUT_SUMMARY
+#     print("[SUBTOUR-CUT-SUMMARY] " + "mipsol_callbacks=" + str(s["mipsol_callbacks"]) + " subtour_cuts=" + str(s["subtour_cuts"]) + " returned_before_route_dp=" + str(s["returned_before_route_dp"]) + " reached_route_dp=" + str(s["reached_route_dp"]) + " routes_checked=" + str(s["routes_checked"]))
+#     print("[SUBTOUR-CUT-SUMMARY] bad_cycle_size_distribution=" + str(dict(sorted(s["bad_cycle_size"].items()))))
+#     print("[SUBTOUR-CUT-SUMMARY] chosen_arc_count_distribution=" + str(dict(sorted(s["chosen_arc_count"].items()))))
+#     print("[SUBTOUR-CUT-SUMMARY] route_count_distribution=" + str(dict(sorted(s["route_count"].items()))))
+#     print("[SUBTOUR-CUT-SUMMARY] reason_distribution=" + str(dict(s["reason"].most_common())))
+# Counter is imported before feasibility-cut summary dictionaries are constructed.
+
+#   interval_ok=150, better_than_front=0, same_as_front=150,
+#   worse_than_front=0, front_missing=0.
+# Interpretation: for the tested instance, the contiguous-interval dry run did
+# not find a smaller cut than the active guarded failure-prefix/front-pruned cut.
+# Keep interval search as optional diagnostic code only; do not run it by default.
+FEASIBILITY_CUT_INTERVAL_DRY_RUN_ENABLED = False
+FEASIBILITY_CUT_INTERVAL_PRINT_PER_CUT = False
+FEASIBILITY_CUT_MAX_INTERVAL_TESTS = 200
+FEASIBILITY_CUT_INTERVAL_SUMMARY = {
+    "total": 0,
+    "interval_ok": 0,
+    "interval_better_than_front": 0,
+    "interval_same_as_front": 0,
+    "interval_worse_than_front": 0,
+    "front_missing": 0,
+    "tests_run": Counter(),
+    "interval_size": Counter(),
+    "front_size": Counter(),
+    "reason": Counter(),
+}
+
+
+def _find_contiguous_infeasible_chain(route, arcs, data, fail_i):
+    """Dry-run contiguous-interval candidate finder.
+
+    This optional diagnostic searches contiguous selected-arc intervals that
+    include the arc covering the first failed skeleton edge. Candidates are
+    retested with the route-DP feasibility check before being counted as valid.
+
+    It is disabled by default because prior validation on the hard instance
+    found the same candidate sizes as the active failure-prefix/front-pruned
+    helper in every observed feasibility-cut case.
+    """
+    out = {
+        "ok": False,
+        "reason": None,
+        "route_size": len(route),
+        "candidate_size": None,
+        "candidate_arcs": None,
+        "failed_edge": None,
+        "covering_arc_pos": None,
+        "covering_arc_id": None,
+        "tests_run": 0,
+        "search_exhausted": False,
+        "would_shrink_vs_full": False,
+    }
+    try:
+        skeleton, cover_arc_index = _build_route_skeleton_and_cover(route, arcs, data)
+    except Exception as exc:
+        out["reason"] = f"skeleton_cover_error:{type(exc).__name__}:{exc}"
+        return out
+    if fail_i is None or fail_i < 0 or fail_i + 1 >= len(skeleton):
+        out["reason"] = "fail_i_unavailable_or_out_of_range"
+        return out
+    out["failed_edge"] = f"{skeleton[fail_i]}->{skeleton[fail_i + 1]}"
+    if fail_i >= len(cover_arc_index):
+        out["reason"] = "cover_arc_index_missing_fail_i"
+        return out
+    covering_arc_pos = cover_arc_index[fail_i]
+    if covering_arc_pos < 0 or covering_arc_pos >= len(route):
+        out["reason"] = "covering_arc_pos_out_of_range"
+        return out
+    out["covering_arc_pos"] = covering_arc_pos
+    out["covering_arc_id"] = route[covering_arc_pos]
+
+    route_size = len(route)
+    min_size = max(1, FEASIBILITY_CUT_MIN_CHAIN_SIZE)
+    tests_allowed = max(1, FEASIBILITY_CUT_MAX_INTERVAL_TESTS)
+
+    for size in range(min_size, route_size + 1):
+        start_min = max(0, covering_arc_pos - size + 1)
+        start_max = min(covering_arc_pos, route_size - size)
+        for start_pos in range(start_min, start_max + 1):
+            end_pos = start_pos + size
+            candidate = list(route[start_pos:end_pos])
+            try:
+                cand_ok, cand_fail_i, cand_skeleton = _test_fragment_chain_feasibility(data, arcs, candidate)
+            except Exception as exc:
+                out["tests_run"] += 1
+                if FEASIBILITY_CUT_VERBOSE_CANDIDATE_TESTS:
+                    print(
+                        f"[FEAS-CUT-INTERVAL-DRY-RUN] candidate_test_error "
+                        f"start_pos={start_pos} end_pos={end_pos} candidate_size={len(candidate)} "
+                        f"error={type(exc).__name__}:{exc}"
+                    )
+                if out["tests_run"] >= tests_allowed:
+                    out["reason"] = "interval_test_limit_reached"
+                    return out
+                continue
+            out["tests_run"] += 1
+            if FEASIBILITY_CUT_VERBOSE_CANDIDATE_TESTS:
+                print(
+                    f"[FEAS-CUT-INTERVAL-DRY-RUN] candidate_test "
+                    f"start_pos={start_pos} end_pos={end_pos} candidate_size={len(candidate)} "
+                    f"candidate_ok={cand_ok} candidate_fail_i={cand_fail_i} "
+                    f"candidate_skeleton_len={len(cand_skeleton)} candidate_arc_ids={candidate}"
+                )
+            if not cand_ok:
+                out["ok"] = True
+                out["reason"] = "interval_candidate_retested_infeasible"
+                out["candidate_size"] = len(candidate)
+                out["candidate_arcs"] = candidate
+                out["would_shrink_vs_full"] = len(candidate) < len(route)
+                return out
+            if out["tests_run"] >= tests_allowed:
+                out["reason"] = "interval_test_limit_reached"
+                return out
+    out["search_exhausted"] = True
+    out["reason"] = "no_contiguous_interval_candidate_retested_infeasible"
+    return out
+
+
+def _record_interval_feasibility_dry_run(front_info, interval_info):
+    s = FEASIBILITY_CUT_INTERVAL_SUMMARY
+    s["total"] += 1
+    reason = interval_info.get("reason")
+    s["reason"][str(reason)] += 1
+    s["tests_run"][int(interval_info.get("tests_run", 0))] += 1
+    if interval_info.get("ok"):
+        s["interval_ok"] += 1
+        interval_size = int(interval_info.get("candidate_size"))
+        s["interval_size"][interval_size] += 1
+    else:
+        interval_size = None
+    if front_info and front_info.get("ok") and front_info.get("candidate_size") is not None:
+        front_size = int(front_info.get("candidate_size"))
+        s["front_size"][front_size] += 1
+        if interval_size is not None:
+            if interval_size < front_size:
+                s["interval_better_than_front"] += 1
+            elif interval_size == front_size:
+                s["interval_same_as_front"] += 1
+            else:
+                s["interval_worse_than_front"] += 1
+    else:
+        s["front_missing"] += 1
+
+
+def _dry_run_interval_feasibility_cut(route, arcs, data, fail_i, front_info=None):
+    """Compare interval-pruned and front-pruned feasibility-cut candidates without activating interval cuts."""
+    interval_info = _find_contiguous_infeasible_chain(route, arcs, data, fail_i)
+    _record_interval_feasibility_dry_run(front_info, interval_info)
+    if FEASIBILITY_CUT_INTERVAL_PRINT_PER_CUT:
+        front_size = None if not front_info or not front_info.get("ok") else front_info.get("candidate_size")
+        interval_size = None if not interval_info.get("ok") else interval_info.get("candidate_size")
+        print(
+            "[FEAS-CUT-INTERVAL-DRY-RUN] "
+            f"interval_ok={interval_info.get('ok')} "
+            f"reason={interval_info.get('reason')} "
+            f"full_size={interval_info.get('route_size')} "
+            f"front_size={front_size} "
+            f"interval_size={interval_size} "
+            f"tests_run={interval_info.get('tests_run')} "
+            "active_cut=unchanged"
+        )
+    return interval_info
+
+
+def _print_interval_feasibility_dry_run_summary():
+    if not FEASIBILITY_CUT_INTERVAL_DRY_RUN_ENABLED:
+        return
+    s = FEASIBILITY_CUT_INTERVAL_SUMMARY
+    if s["total"] == 0:
+        print("[FEAS-CUT-INTERVAL-SUMMARY] total=0")
+        return
+    print(
+        "[FEAS-CUT-INTERVAL-SUMMARY] total=" + str(s["total"]) +
+        " interval_ok=" + str(s["interval_ok"]) +
+        " better_than_front=" + str(s["interval_better_than_front"]) +
+        " same_as_front=" + str(s["interval_same_as_front"]) +
+        " worse_than_front=" + str(s["interval_worse_than_front"]) +
+        " front_missing=" + str(s["front_missing"])
+    )
+    print("[FEAS-CUT-INTERVAL-SUMMARY] interval_size_distribution=" + str(dict(sorted(s["interval_size"].items()))))
+    print("[FEAS-CUT-INTERVAL-SUMMARY] front_size_distribution=" + str(dict(sorted(s["front_size"].items()))))
+    print("[FEAS-CUT-INTERVAL-SUMMARY] tests_run_distribution=" + str(dict(sorted(s["tests_run"].items()))))
+    print("[FEAS-CUT-INTERVAL-SUMMARY] reason_distribution=" + str(dict(s["reason"].most_common())))
+
+
+def _find_front_pruned_infeasible_chain(route, arcs, data, fail_i):
+    """Return a guarded infeasible chain from the failure prefix.
+
+    The route DP reports the first failed skeleton edge. This helper maps that
+    failed edge back to the selected fragment arc that covers it, forms the
+    selected-route prefix ending at that covering arc, then front-prunes that
+    prefix. Each candidate suffix is retested with the same route-DP feasibility
+    check before it can be used as a lazy feasibility cut.
+
+    In this callback, "guarded" means a smaller candidate is not trusted merely
+    because it is shorter. It must be structurally mappable and must retest as
+    infeasible. If those checks fail, the callback falls back to the full-route
+    feasibility cut.
+
+    The interval dry run tested contiguous intervals containing the failed
+    covering arc. It found no smaller candidate than this failure-
+    prefix/front-pruned helper for that run, so interval search remains optional
+    diagnostic code rather than active callback behaviour.
     """
     out = {
         "ok": False,
@@ -448,6 +780,7 @@ def _find_front_pruned_infeasible_chain(route, arcs, data, fail_i):
 
     if best_bad is None:
         out["reason"] = "no_front_pruned_candidate_retested_infeasible"
+        _record_pruning_summary(len(route), len(prefix), None, out["reason"], False)
         return out
 
     out["ok"] = True
@@ -456,6 +789,7 @@ def _find_front_pruned_infeasible_chain(route, arcs, data, fail_i):
     out["candidate_arcs"] = list(best_bad)
     out["would_shrink_vs_full"] = len(best_bad) < len(route)
     out["would_shrink_vs_prefix"] = len(best_bad) < len(prefix)
+    _record_pruning_summary(len(route), len(prefix), len(best_bad), out["reason"], True)
     return out
 
 def _dry_run_front_pruned_feasibility_cut(route, arcs, data, fail_i):
@@ -492,7 +826,6 @@ ACTIVE_FEASIBILITY_CUT_ENABLED = True
 FEASIBILITY_CUT_PRINT_PER_CUT = False
 
 import atexit
-from collections import Counter
 FEASIBILITY_CUT_SUMMARY_ONLY = True
 FEASIBILITY_CUT_SUMMARY = {
     "total": 0,
@@ -527,20 +860,187 @@ def _print_feasibility_cut_summary():
     print("[FEAS-CUT-SUMMARY] top_cut_patterns=" + str([(list(k), v) for k, v in s["pattern"].most_common(20)]))
 
 atexit.register(_print_feasibility_cut_summary)
+atexit.register(_print_pruning_summary)
+atexit.register(_print_solver_bound_summary)
+atexit.register(_print_interval_feasibility_dry_run_summary)
+
+# Defines component-summary diagnostics before atexit registration. This fixes
+# definition in callback_core.py.
+import os as os
+
+if 'SUBTOUR_COMPONENT_CUTS_ENABLED' not in globals():
+    # Component-wise disconnected-subtour cuts are now the default. Use
+    # EVRP_SUBTOUR_COMPONENT_CUTS=0/false/no/off/aggregate to force the
+    # legacy aggregate cut over the full disconnected arc set.
+    SUBTOUR_COMPONENT_CUTS_ENABLED = str(__import__("os").getenv("EVRP_SUBTOUR_COMPONENT_CUTS", "1")).strip().lower() not in {"0", "false", "no", "off", "aggregate"}
+
+if 'SUBTOUR_COMPONENT_SUMMARY' not in globals():
+    SUBTOUR_COMPONENT_SUMMARY = {
+        "analysed": 0,
+        "component_cut_mode_used": 0,
+        "aggregate_cut_mode_used": 0,
+        "component_count": Counter(),
+        "component_arc_size": Counter(),
+        "component_node_size": Counter(),
+        "largest_component_arc_size": Counter(),
+        "smallest_component_arc_size": Counter(),
+    }
+
+# Adds dry-run comparison of front-pruned and contiguous-interval feasibility-cut candidates.
+# Active lazy-cut selection remains unchanged in this overlay.
+
+# Interval dry run is retained as optional diagnostic code but disabled by default.
+# Active lazy-cut selection remains the guarded failure-prefix/front-pruned feasibility cut.
+
+# Adds bounded-run diagnostics: front/rear pruning decomposition and solver bound snapshots.
+# Active feasibility-cut logic remains unchanged.
 
 
-# === CANONICAL_FEASIBILITY_CUT_NAMING_APPLIED: start ===
-# Feasibility-cut helpers use production names rather than troubleshooting labels.
-# The active cut remains the front-pruned infeasible-chain cut with summary output.
-# === CANONICAL_FEASIBILITY_CUT_NAMING_APPLIED: end ===
+# Self-contained subtour and component diagnostics for capped solves.
+# Active behaviour is unchanged by default: aggregate bad_cycle_arcs cut remains active.
+# Optional strengthening: set EVRP_SUBTOUR_COMPONENT_CUTS=1 to cut each disconnected component.
+import os as os
+
+if 'SUBTOUR_CUT_SUMMARY' not in globals():
+    SUBTOUR_CUT_SUMMARY = {
+        "mipsol_callbacks": 0,
+        "subtour_cuts": 0,
+        "returned_before_route_dp": 0,
+        "reached_route_dp": 0,
+        "routes_checked": 0,
+        "chosen_arc_count": Counter(),
+        "bad_cycle_size": Counter(),
+        "route_count": Counter(),
+        "reason": Counter(),
+    }
+
+if '_record_mipsol_callback' not in globals():
+    def _record_mipsol_callback(chosen_count):
+        SUBTOUR_CUT_SUMMARY["mipsol_callbacks"] += 1
+        SUBTOUR_CUT_SUMMARY["chosen_arc_count"][int(chosen_count)] += 1
+
+if '_record_subtour_lazy_cut' not in globals():
+    def _record_subtour_lazy_cut(cut_size, bad_tail_count=None):
+        SUBTOUR_CUT_SUMMARY["subtour_cuts"] += 1
+        SUBTOUR_CUT_SUMMARY["returned_before_route_dp"] += 1
+        SUBTOUR_CUT_SUMMARY["bad_cycle_size"][int(cut_size)] += 1
+        SUBTOUR_CUT_SUMMARY["reason"]["disconnected_cycle_or_subtour"] += 1
+
+if '_record_route_dp_reached' not in globals():
+    def _record_route_dp_reached(route_count):
+        SUBTOUR_CUT_SUMMARY["reached_route_dp"] += 1
+        SUBTOUR_CUT_SUMMARY["routes_checked"] += int(route_count)
+        SUBTOUR_CUT_SUMMARY["route_count"][int(route_count)] += 1
+
+if '_print_subtour_cut_summary' not in globals():
+    def _print_subtour_cut_summary():
+        s = SUBTOUR_CUT_SUMMARY
+        print(
+            "[SUBTOUR-CUT-SUMMARY] "
+            + "mipsol_callbacks=" + str(s["mipsol_callbacks"])
+            + " subtour_cuts=" + str(s["subtour_cuts"])
+            + " returned_before_route_dp=" + str(s["returned_before_route_dp"])
+            + " reached_route_dp=" + str(s["reached_route_dp"])
+            + " routes_checked=" + str(s["routes_checked"])
+        )
+        print("[SUBTOUR-CUT-SUMMARY] bad_cycle_size_distribution=" + str(dict(sorted(s["bad_cycle_size"].items()))))
+        print("[SUBTOUR-CUT-SUMMARY] chosen_arc_count_distribution=" + str(dict(sorted(s["chosen_arc_count"].items()))))
+        print("[SUBTOUR-CUT-SUMMARY] route_count_distribution=" + str(dict(sorted(s["route_count"].items()))))
+        print("[SUBTOUR-CUT-SUMMARY] reason_distribution=" + str(dict(s["reason"].most_common())))
+
+# Component-wise disconnected-subtour cuts are now the default. Use
+# EVRP_SUBTOUR_COMPONENT_CUTS=0/false/no/off/aggregate to force the
+# legacy aggregate cut over the full disconnected arc set.
+SUBTOUR_COMPONENT_CUTS_ENABLED = str(__import__("os").getenv("EVRP_SUBTOUR_COMPONENT_CUTS", "1")).strip().lower() not in {"0", "false", "no", "off", "aggregate"}
+SUBTOUR_COMPONENT_SUMMARY = {
+    "analysed": 0,
+    "component_cut_mode_used": 0,
+    "aggregate_cut_mode_used": 0,
+    "component_count": Counter(),
+    "component_arc_size": Counter(),
+    "component_node_size": Counter(),
+    "largest_component_arc_size": Counter(),
+    "smallest_component_arc_size": Counter(),
+}
+
+def _selected_disconnected_components(bad_cycle_arcs, arcs):
+    adj = {}
+    arc_lookup = {}
+    for aid in bad_cycle_arcs:
+        a = arcs[aid]
+        u = a['u']
+        v = a['v']
+        adj.setdefault(u, set()).add(v)
+        adj.setdefault(v, set()).add(u)
+        arc_lookup.setdefault(u, set()).add(aid)
+        arc_lookup.setdefault(v, set()).add(aid)
+    seen = set()
+    comps = []
+    for n in list(adj):
+        if n in seen:
+            continue
+        stack = [n]
+        seen.add(n)
+        nodes = set()
+        comp_arcs = set()
+        while stack:
+            x = stack.pop()
+            nodes.add(x)
+            comp_arcs.update(arc_lookup.get(x, set()))
+            for y in adj.get(x, set()):
+                if y not in seen:
+                    seen.add(y)
+                    stack.append(y)
+        comps.append({"nodes": nodes, "arcs": sorted(comp_arcs)})
+    comps.sort(key=lambda c: (-len(c["arcs"]), -len(c["nodes"]), c["arcs"][0] if c["arcs"] else -1))
+    return comps
+
+def _record_subtour_component_summary(components, mode):
+    SUBTOUR_COMPONENT_SUMMARY["analysed"] += 1
+    if mode == "component":
+        SUBTOUR_COMPONENT_SUMMARY["component_cut_mode_used"] += 1
+    else:
+        SUBTOUR_COMPONENT_SUMMARY["aggregate_cut_mode_used"] += 1
+    sizes = []
+    SUBTOUR_COMPONENT_SUMMARY["component_count"][int(len(components))] += 1
+    for comp in components:
+        arc_size = len(comp.get("arcs", []))
+        node_size = len(comp.get("nodes", []))
+        sizes.append(arc_size)
+        SUBTOUR_COMPONENT_SUMMARY["component_arc_size"][int(arc_size)] += 1
+        SUBTOUR_COMPONENT_SUMMARY["component_node_size"][int(node_size)] += 1
+    if sizes:
+        SUBTOUR_COMPONENT_SUMMARY["largest_component_arc_size"][int(max(sizes))] += 1
+        SUBTOUR_COMPONENT_SUMMARY["smallest_component_arc_size"][int(min(sizes))] += 1
+
+def _print_subtour_component_summary():
+    s = SUBTOUR_COMPONENT_SUMMARY
+    print(
+        "[SUBTOUR-COMPONENT-SUMMARY] "
+        + "analysed=" + str(s["analysed"])
+        + " component_cut_mode_used=" + str(s["component_cut_mode_used"])
+        + " aggregate_cut_mode_used=" + str(s["aggregate_cut_mode_used"])
+        + " component_cuts_enabled=" + str(SUBTOUR_COMPONENT_CUTS_ENABLED)
+    )
+    print("[SUBTOUR-COMPONENT-SUMMARY] component_count_distribution=" + str(dict(sorted(s["component_count"].items()))))
+    print("[SUBTOUR-COMPONENT-SUMMARY] component_arc_size_distribution=" + str(dict(sorted(s["component_arc_size"].items()))))
+    print("[SUBTOUR-COMPONENT-SUMMARY] component_node_size_distribution=" + str(dict(sorted(s["component_node_size"].items()))))
+    print("[SUBTOUR-COMPONENT-SUMMARY] largest_component_arc_size_distribution=" + str(dict(sorted(s["largest_component_arc_size"].items()))))
+    print("[SUBTOUR-COMPONENT-SUMMARY] smallest_component_arc_size_distribution=" + str(dict(sorted(s["smallest_component_arc_size"].items()))))
 
 def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
+    if where == gp.GRB.Callback.MIP:
+        _record_solver_bound_snapshot(model, where)
+        return
+    if where == gp.GRB.Callback.MIPSOL:
+        _record_solver_bound_snapshot(model, where)
     if where != gp.GRB.Callback.MIPSOL:
         return
 
     # Selected arcs
     xsol = model.cbGetSolution(x_vars)
     choose = [a_id for a_id, val in xsol.items() if val > 0.5]
+    _record_subtour_mipsol(len(choose))
     if not choose:
         return
 
@@ -567,7 +1067,18 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
     bad_cycle_arcs = [a_id for a_id in choose if arcs[a_id]['u'] not in seen_nodes]
     if bad_cycle_arcs:
         # cut here b/c all arcs in that subtour can be selected together ie. |S| - 1
-        model.cbLazy(gp.quicksum(x_vars[a_id] for a_id in bad_cycle_arcs) <= len(bad_cycle_arcs) - 1)
+        components = _selected_disconnected_components(bad_cycle_arcs, arcs)
+        if SUBTOUR_COMPONENT_CUTS_ENABLED and components:
+            _record_subtour_component_summary(components, "component")
+            for comp in components:
+                comp_arcs = list(comp.get("arcs", []))
+                if comp_arcs:
+                    _record_subtour_lazy_cut(len(comp_arcs), len(comp.get("nodes", [])))
+                    model.cbLazy(gp.quicksum(x_vars[a_id] for a_id in comp_arcs) <= len(comp_arcs) - 1)
+        else:
+            _record_subtour_component_summary(components, "aggregate")
+            _record_subtour_lazy_cut(len(bad_cycle_arcs), len({arcs[a_id]['u'] for a_id in bad_cycle_arcs}))
+            model.cbLazy(gp.quicksum(x_vars[a_id] for a_id in bad_cycle_arcs) <= len(bad_cycle_arcs) - 1)
         return
 
     # extract routes starting from depot
@@ -592,51 +1103,9 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
     sid_to_i = data['sid_to_i']
     dist_fn = data['dist']
 
+    _record_route_dp_stage(routes)
     # We'll compute DP-based feasibility/cost per route and aggregate delta_total across all routes
     delta_total = 0.0
-
-    # Helper: build skeleton and edge->arc mapping from a route arc list
-    def skeleton_and_cover(route_arc_ids):
-        # Build the skeleton nodes in order (stations removed), and map each skeleton edge to the arc index that covers it
-        cover_arc_index = []  # cover_arc_index[j] = index in route_arc_ids of arc covering edge j: skeleton[j]->skeleton[j+1]
-
-        # Build per-arc skeleton subseqs and then align
-        arc_skel = []
-        for idx, a_idid in enumerate(route_arc_ids):
-            seq = arcs[a_id]['seq']
-            sk = [sid for sid in seq if not is_station(data, sid)]
-            # sk should have at least start/end
-            arc_skel.append((idx, sk))
-
-        # Merge in order, tracking edge coverage by arc index
-        # Start with first arc's skeleton
-        if not arc_skel or not arc_skel[0][1]:
-            return [], []
-
-        skeleton = list(arc_skel[0][1])
-
-        # edges in this first arc are covered by arc index 0
-        for _ in range(len(skeleton) - 1):
-            cover_arc_index.append(arc_skel[0][0])
-
-        # Append subsequent arcs, avoiding duplicate join node
-        for (aidx, sk) in arc_skel[1:]:
-            if not sk:
-                continue
-            if skeleton and sk and skeleton[-1] == sk[0]:
-                # append sk[1:]
-                for sid in sk[1:]:
-                    skeleton.append(sid)
-                for _ in range(len(sk) - 1):
-                    cover_arc_index.append(aidx)
-            else:
-                # discontinuity; still append
-                for sid in sk:
-                    skeleton.append(sid)
-                for _ in range(len(sk) - 1):
-                    cover_arc_index.append(aidx)
-
-        return skeleton, cover_arc_index
 
     # --- process each route ---
     for route in routes:
@@ -664,6 +1133,8 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
         if not ok:
             # Active guarded front-pruned feasibility cut.
             candidate_info = _find_front_pruned_infeasible_chain(route, arcs, data, fail_i)
+            if FEASIBILITY_CUT_INTERVAL_DRY_RUN_ENABLED:
+                _dry_run_interval_feasibility_cut(route, arcs, data, fail_i, candidate_info)
             if ACTIVE_FEASIBILITY_CUT_ENABLED and candidate_info.get('ok') and candidate_info.get('candidate_arcs') and candidate_info.get('candidate_size', len(route)) < len(route):
                 S_feas = list(candidate_info['candidate_arcs'])
                 fallback = False
@@ -694,78 +1165,19 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
         S = choose
         model.cbLazy(theta >= delta_total - M*(len(S) - gp.quicksum(x_vars[a] for a in S)))
 
-def extract_routes_from_solution(chosen_arc_ids, arc_by_id, depot_sid='D0'):
-    # index chosen arcs by Start node
-    start_map = {}
-    for aid in chosen_arc_ids:
-        a = arc_by_id[aid]
-        start_map.setdefault(a['Start'], []).append(aid)
+# Register final branch-summary printers after consolidated definitions are in
+# scope. Instrumentation only; does not alter subtour or feasibility logic.
+def _register_callback_branch_summaries():
+    global _CALLBACK_BRANCH_SUMMARIES_REGISTERED
+    if globals().get("_CALLBACK_BRANCH_SUMMARIES_REGISTERED", False):
+        return
+    registered = []
+    for name in ("_print_subtour_cut_summary", "_print_subtour_component_summary"):
+        func = globals().get(name)
+        if callable(func):
+            atexit.register(func)
+            registered.append(name)
+    _CALLBACK_BRANCH_SUMMARIES_REGISTERED = True
+    globals()["_CALLBACK_BRANCH_SUMMARY_REGISTERED_NAMES"] = tuple(registered)
 
-    routes = []
-
-    # depot-starting arcs define routes
-    for aid0 in start_map.get(depot_sid, []):
-        route = [aid0]
-        cur_aid = aid0
-        cur_end = arc_by_id[cur_aid]['End']
-
-        while cur_end != depot_sid:
-            nexts = start_map.get(cur_end, [])
-            if len(nexts) != 1:
-                raise RuntimeError(
-                    f"Ambiguous or missing continuation at {cur_end}: {nexts}"
-                )
-            cur_aid = nexts[0]
-            route.append(cur_aid)
-            cur_end = arc_by_id[cur_aid]['End']
-
-        routes.append(route)
-
-    return routes
-
-def route_distance_from_sids(data, sid_seq):
-    dist = data['dist']         # helper from read_instance
-    sid_to_i = data['sid_to_i'] # SID -> node index
-    total = 0.0
-    for u_sid, v_sid in zip(sid_seq, sid_seq[1:]):
-        ui = sid_to_i[u_sid]
-        vi = sid_to_i[v_sid]
-        total += dist(ui, vi)
-    return total
-
-def stitch_sid_sequence(route, arc_by_id):
-    sid_seq = []
-    for k, aid in enumerate(route):
-        s = arc_by_id[aid]['seq']
-        if k == 0:
-            sid_seq = list(s)
-        else:
-            if sid_seq[-1] == s[0]:
-                sid_seq.extend(s[1:])
-            else:
-                sid_seq.extend(s)
-    return sid_seq
-
-def simulate_route(data, sid_seq):
-    st = (
-        (0,),                 # path placeholder
-        0,                    # time
-        frozenset(),          # onboard
-        data['CapE'],         # energy
-        0.0,                  # cost
-        frozenset(),          # visited pickups
-        frozenset(),          # visited deliveries
-        frozenset(),          # visited stations
-        0,                    # last node
-        0.0                   # slack
-    )
-
-    for sid in sid_seq[1:]:
-        j = data['sid_to_i'][sid]
-        st2, reason = step(data, st, j)
-        if st2 is None:
-            return False, sid, reason
-        st = st2
-
-    return True, None, None
-
+_register_callback_branch_summaries()

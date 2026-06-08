@@ -10,6 +10,7 @@ Role: v1h canonical runner.
 from __future__ import annotations
 
 import argparse
+import os
 
 from evrp_fragments.pipeline import run_solver, summary_to_json
 
@@ -21,11 +22,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--k-max", type=int, required=True)
     parser.add_argument("--force-exact-k", action="store_true")
     parser.add_argument("--use-callback", action="store_true")
+    parser.add_argument("--time-limit-sec", type=float, default=None, help="Optional Gurobi TimeLimit in seconds for bounded diagnostic runs.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.time_limit_sec is not None:
+        if args.time_limit_sec <= 0:
+            raise ValueError("--time-limit-sec must be positive when supplied")
+        os.environ["EVRP_SOLVER_TIME_LIMIT_SEC"] = str(float(args.time_limit_sec))
     summary = run_solver(
         instance=args.instance,
         max_base_path_len=args.max_base_path_len,
