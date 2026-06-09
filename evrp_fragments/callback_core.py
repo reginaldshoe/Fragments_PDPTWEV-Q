@@ -500,19 +500,7 @@ def _record_route_dp_stage(routes):
     s["route_count"][int(len(routes))] += 1
     s["routes_checked"] += int(len(routes))
 
-# def _print_subtour_cut_summary():
-#     s = SUBTOUR_CUT_SUMMARY
-#     print("[SUBTOUR-CUT-SUMMARY] " + "mipsol_callbacks=" + str(s["mipsol_callbacks"]) + " subtour_cuts=" + str(s["subtour_cuts"]) + " returned_before_route_dp=" + str(s["returned_before_route_dp"]) + " reached_route_dp=" + str(s["reached_route_dp"]) + " routes_checked=" + str(s["routes_checked"]))
-#     print("[SUBTOUR-CUT-SUMMARY] bad_cycle_size_distribution=" + str(dict(sorted(s["bad_cycle_size"].items()))))
-#     print("[SUBTOUR-CUT-SUMMARY] chosen_arc_count_distribution=" + str(dict(sorted(s["chosen_arc_count"].items()))))
-#     print("[SUBTOUR-CUT-SUMMARY] route_count_distribution=" + str(dict(sorted(s["route_count"].items()))))
-#     print("[SUBTOUR-CUT-SUMMARY] reason_distribution=" + str(dict(s["reason"].most_common())))
-# Counter is imported before feasibility-cut summary dictionaries are constructed.
 
-#   interval_ok=150, better_than_front=0, same_as_front=150,
-#   worse_than_front=0, front_missing=0.
-# Interpretation: for the tested instance, the contiguous-interval dry run did
-# not find a smaller cut than the active guarded failure-prefix/front-pruned cut.
 # Keep interval search as optional diagnostic code only; do not run it by default.
 FEASIBILITY_CUT_INTERVAL_DRY_RUN_ENABLED = False
 FEASIBILITY_CUT_INTERVAL_PRINT_PER_CUT = False
@@ -1099,9 +1087,6 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
             if len(route) > len(choose) + 5:
                 break
         routes.append(route)
-
-    sid_to_i = data['sid_to_i']
-    dist_fn = data['dist']
 
     _record_route_dp_stage(routes)
     # We'll compute DP-based feasibility/cost per route and aggregate delta_total across all routes
