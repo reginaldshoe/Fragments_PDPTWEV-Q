@@ -7,6 +7,12 @@ Do not edit manually during parity consolidation.
 """
 
 from __future__ import annotations
+from .fragment_core import (
+    compute_T_E_L,
+    compute_distance,
+    max_dist,
+    strip_stations,
+)
 
 MASTER_CORE_GENERATED = True
 MASTER_CORE_SOURCE = 'evrp_fragments_consolidated_v1\\legacy_core.py'

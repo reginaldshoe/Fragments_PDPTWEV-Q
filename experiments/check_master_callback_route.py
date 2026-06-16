@@ -125,8 +125,8 @@ def _route_distance(data, sid_seq):
 
 def check_master_callback_solution(instance, max_base_path_len, k_max=1, use_callback=True, time_limit_sec=300.0, depot_sid="D0"):
     from evrp_fragments.fragment_core import read_instance
-    from evrp_fragments.pipeline_v1e import run_solver
-    import evrp_fragments.pipeline_v1e as pipeline_v1e
+    from evrp_fragments.pipeline import run_solver
+    import evrp_fragments.pipeline as pipeline
     import evrp_fragments.callback_core as cbcore
 
     data = read_instance(instance)
@@ -144,7 +144,7 @@ def check_master_callback_solution(instance, max_base_path_len, k_max=1, use_cal
     summary_obj = _call_with_supported_kwargs(run_solver, **kwargs)
     summary = _summary_to_dict(summary_obj)
     selected_arc_ids = summary.get("selected_arc_ids") or getattr(summary_obj, "selected_arc_ids", None) or []
-    arc_by_id = getattr(getattr(pipeline_v1e, "cbcore", None), "arc_by_id", None)
+    arc_by_id = getattr(getattr(pipeline, "cbcore", None), "arc_by_id", None)
     if not isinstance(arc_by_id, dict):
         arc_by_id = getattr(cbcore, "arc_by_id", None)
     if not isinstance(arc_by_id, dict):

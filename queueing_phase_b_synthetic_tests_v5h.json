@@ -1,0 +1,662 @@
+{
+  "summary": {
+    "resolvable_overlap": {
+      "ok": true,
+      "total_delay": 40.0,
+      "total_service_delay": 40.0,
+      "conflict_count": 0,
+      "infeasible_arc_ids": []
+    },
+    "infeasible_overlap": {
+      "ok": false,
+      "total_delay": 0.0,
+      "total_service_delay": 0.0,
+      "conflict_count": 1,
+      "infeasible_arc_ids": [
+        10,
+        20
+      ]
+    },
+    "suffix_propagation": {
+      "ok": true,
+      "total_delay": 120.0,
+      "total_service_delay": 80.0,
+      "conflict_count": 0,
+      "infeasible_arc_ids": []
+    }
+  },
+  "cases": {
+    "resolvable_overlap": {
+      "extraction": {
+        "routes": [
+          {
+            "route_id": 0,
+            "arc_ids": [
+              10
+            ],
+            "sid_sequence": [
+              "D0",
+              "C_A",
+              "D0"
+            ]
+          },
+          {
+            "route_id": 1,
+            "arc_ids": [
+              20
+            ],
+            "sid_sequence": [
+              "D0",
+              "C_B",
+              "D0"
+            ]
+          }
+        ],
+        "activities": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "arc_pos": 0,
+            "kind": "service",
+            "sid_from": null,
+            "sid_to": null,
+            "node_sid": "C_A",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "latest_start": 300.0,
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "slide": 200.0,
+            "supporting_arc_ids": [
+              10
+            ]
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "arc_pos": 0,
+            "kind": "service",
+            "sid_from": null,
+            "sid_to": null,
+            "node_sid": "C_B",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "latest_start": 250.0,
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "slide": 100.0,
+            "supporting_arc_ids": [
+              20
+            ]
+          }
+        ],
+        "ignored_station_sids": []
+      },
+      "schedule": {
+        "ok": true,
+        "total_delay": 40.0,
+        "total_service_delay": 40.0,
+        "resource_wait_time": 40.0,
+        "resource_wait_event_count": 1,
+        "windows": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "local_latest_start": 300.0,
+            "propagated_latest_start": 300.0,
+            "propagated_slack": 200.0
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "local_latest_start": 250.0,
+            "propagated_latest_start": 250.0,
+            "propagated_slack": 100.0
+          }
+        ],
+        "scheduled_activities": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "scheduled_start": 100.0,
+            "scheduled_end": 190.0,
+            "delay": 0.0,
+            "propagated_latest_start": 300.0,
+            "supporting_arc_ids": [
+              10
+            ]
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "scheduled_start": 190.0,
+            "scheduled_end": 280.0,
+            "delay": 40.0,
+            "propagated_latest_start": 250.0,
+            "supporting_arc_ids": [
+              20
+            ]
+          }
+        ],
+        "wait_events": [
+          {
+            "resource_id": "customer_location:42,10",
+            "waiting_activity_id": 1,
+            "blocking_activity_id": 0,
+            "waiting_arc_id": 20,
+            "blocking_arc_id": 10,
+            "wait_duration": 40.0,
+            "previous_end": 190.0,
+            "original_start": 150.0,
+            "scheduled_start": 190.0
+          }
+        ],
+        "conflicts": [],
+        "infeasible_activity_ids": [],
+        "infeasible_arc_ids": []
+      }
+    },
+    "infeasible_overlap": {
+      "extraction": {
+        "routes": [
+          {
+            "route_id": 0,
+            "arc_ids": [
+              10
+            ],
+            "sid_sequence": [
+              "D0",
+              "C_A",
+              "D0"
+            ]
+          },
+          {
+            "route_id": 1,
+            "arc_ids": [
+              20
+            ],
+            "sid_sequence": [
+              "D0",
+              "C_B",
+              "D0"
+            ]
+          }
+        ],
+        "activities": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "arc_pos": 0,
+            "kind": "service",
+            "sid_from": null,
+            "sid_to": null,
+            "node_sid": "C_A",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "latest_start": 300.0,
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "slide": 200.0,
+            "supporting_arc_ids": [
+              10
+            ]
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "arc_pos": 0,
+            "kind": "service",
+            "sid_from": null,
+            "sid_to": null,
+            "node_sid": "C_B",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "latest_start": 180.0,
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "slide": 30.0,
+            "supporting_arc_ids": [
+              20
+            ]
+          }
+        ],
+        "ignored_station_sids": []
+      },
+      "schedule": {
+        "ok": false,
+        "total_delay": 0.0,
+        "total_service_delay": 0.0,
+        "resource_wait_time": 0,
+        "resource_wait_event_count": 0,
+        "windows": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "local_latest_start": 300.0,
+            "propagated_latest_start": 300.0,
+            "propagated_slack": 200.0
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "local_latest_start": 180.0,
+            "propagated_latest_start": 180.0,
+            "propagated_slack": 30.0
+          }
+        ],
+        "scheduled_activities": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "scheduled_start": 100.0,
+            "scheduled_end": 190.0,
+            "delay": 0.0,
+            "propagated_latest_start": 300.0,
+            "supporting_arc_ids": [
+              10
+            ]
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "scheduled_start": 150.0,
+            "scheduled_end": 240.0,
+            "delay": 0.0,
+            "propagated_latest_start": 180.0,
+            "supporting_arc_ids": [
+              20
+            ]
+          }
+        ],
+        "wait_events": [],
+        "conflicts": [
+          {
+            "reason": "customer_no_overlap_delay_infeasible",
+            "resource_id": "customer_location:42,10",
+            "activity_ids": [
+              0,
+              1
+            ],
+            "arc_ids": [
+              10,
+              20
+            ],
+            "detail": "activity_id=1 candidate_start=190.0 latest_start=180.0 delay=40.0"
+          }
+        ],
+        "infeasible_activity_ids": [
+          0,
+          1
+        ],
+        "infeasible_arc_ids": [
+          10,
+          20
+        ]
+      }
+    },
+    "suffix_propagation": {
+      "extraction": {
+        "routes": [
+          {
+            "route_id": 0,
+            "arc_ids": [
+              10
+            ],
+            "sid_sequence": [
+              "D0",
+              "C_A",
+              "D0"
+            ]
+          },
+          {
+            "route_id": 1,
+            "arc_ids": [
+              20,
+              21
+            ],
+            "sid_sequence": [
+              "D0",
+              "C_B",
+              "C_C",
+              "D0"
+            ]
+          }
+        ],
+        "activities": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "arc_pos": 0,
+            "kind": "service",
+            "sid_from": null,
+            "sid_to": null,
+            "node_sid": "C_A",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "latest_start": 300.0,
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "slide": 200.0,
+            "supporting_arc_ids": [
+              10
+            ]
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "arc_pos": 0,
+            "kind": "service",
+            "sid_from": null,
+            "sid_to": null,
+            "node_sid": "C_B",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "latest_start": 250.0,
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "slide": 100.0,
+            "supporting_arc_ids": [
+              20
+            ]
+          },
+          {
+            "activity_id": 2,
+            "route_id": 1,
+            "route_pos": 1,
+            "arc_id": 20,
+            "arc_pos": 0,
+            "kind": "movement",
+            "sid_from": "C_B",
+            "sid_to": "C_C",
+            "node_sid": null,
+            "resource_type": "route",
+            "resource_id": "route:1",
+            "duration": 10.0,
+            "earliest_start": 240.0,
+            "latest_start": null,
+            "base_start": 240.0,
+            "base_end": 250.0,
+            "slide": null,
+            "supporting_arc_ids": [
+              20
+            ]
+          },
+          {
+            "activity_id": 3,
+            "route_id": 1,
+            "route_pos": 2,
+            "arc_id": 21,
+            "arc_pos": 0,
+            "kind": "service",
+            "sid_from": null,
+            "sid_to": null,
+            "node_sid": "C_C",
+            "resource_type": "customer",
+            "resource_id": "customer_location:99,99",
+            "duration": 10.0,
+            "earliest_start": 0.0,
+            "latest_start": 310.0,
+            "base_start": 250.0,
+            "base_end": 260.0,
+            "slide": 60.0,
+            "supporting_arc_ids": [
+              21
+            ]
+          }
+        ],
+        "ignored_station_sids": []
+      },
+      "schedule": {
+        "ok": true,
+        "total_delay": 120.0,
+        "total_service_delay": 80.0,
+        "resource_wait_time": 40.0,
+        "resource_wait_event_count": 1,
+        "windows": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "local_latest_start": 300.0,
+            "propagated_latest_start": 300.0,
+            "propagated_slack": 200.0
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "duration": 90.0,
+            "earliest_start": 0.0,
+            "local_latest_start": 250.0,
+            "propagated_latest_start": 210.0,
+            "propagated_slack": 60.0
+          },
+          {
+            "activity_id": 2,
+            "route_id": 1,
+            "route_pos": 1,
+            "arc_id": 20,
+            "kind": "movement",
+            "resource_type": "route",
+            "resource_id": "route:1",
+            "base_start": 240.0,
+            "base_end": 250.0,
+            "duration": 10.0,
+            "earliest_start": 240.0,
+            "local_latest_start": null,
+            "propagated_latest_start": 300.0,
+            "propagated_slack": 60.0
+          },
+          {
+            "activity_id": 3,
+            "route_id": 1,
+            "route_pos": 2,
+            "arc_id": 21,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:99,99",
+            "base_start": 250.0,
+            "base_end": 260.0,
+            "duration": 10.0,
+            "earliest_start": 0.0,
+            "local_latest_start": 310.0,
+            "propagated_latest_start": 310.0,
+            "propagated_slack": 60.0
+          }
+        ],
+        "scheduled_activities": [
+          {
+            "activity_id": 0,
+            "route_id": 0,
+            "route_pos": 0,
+            "arc_id": 10,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 100.0,
+            "base_end": 190.0,
+            "scheduled_start": 100.0,
+            "scheduled_end": 190.0,
+            "delay": 0.0,
+            "propagated_latest_start": 300.0,
+            "supporting_arc_ids": [
+              10
+            ]
+          },
+          {
+            "activity_id": 1,
+            "route_id": 1,
+            "route_pos": 0,
+            "arc_id": 20,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:42,10",
+            "base_start": 150.0,
+            "base_end": 240.0,
+            "scheduled_start": 190.0,
+            "scheduled_end": 280.0,
+            "delay": 40.0,
+            "propagated_latest_start": 210.0,
+            "supporting_arc_ids": [
+              20
+            ]
+          },
+          {
+            "activity_id": 2,
+            "route_id": 1,
+            "route_pos": 1,
+            "arc_id": 20,
+            "kind": "movement",
+            "resource_type": "route",
+            "resource_id": "route:1",
+            "base_start": 240.0,
+            "base_end": 250.0,
+            "scheduled_start": 280.0,
+            "scheduled_end": 290.0,
+            "delay": 40.0,
+            "propagated_latest_start": 300.0,
+            "supporting_arc_ids": [
+              20
+            ]
+          },
+          {
+            "activity_id": 3,
+            "route_id": 1,
+            "route_pos": 2,
+            "arc_id": 21,
+            "kind": "service",
+            "resource_type": "customer",
+            "resource_id": "customer_location:99,99",
+            "base_start": 250.0,
+            "base_end": 260.0,
+            "scheduled_start": 290.0,
+            "scheduled_end": 300.0,
+            "delay": 40.0,
+            "propagated_latest_start": 310.0,
+            "supporting_arc_ids": [
+              21
+            ]
+          }
+        ],
+        "wait_events": [
+          {
+            "resource_id": "customer_location:42,10",
+            "waiting_activity_id": 1,
+            "blocking_activity_id": 0,
+            "waiting_arc_id": 20,
+            "blocking_arc_id": 10,
+            "wait_duration": 40.0,
+            "previous_end": 190.0,
+            "original_start": 150.0,
+            "scheduled_start": 190.0
+          }
+        ],
+        "conflicts": [],
+        "infeasible_activity_ids": [],
+        "infeasible_arc_ids": []
+      }
+    }
+  }
+}

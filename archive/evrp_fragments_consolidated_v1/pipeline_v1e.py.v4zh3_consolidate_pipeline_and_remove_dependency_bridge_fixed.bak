@@ -111,7 +111,6 @@ def build_fragment_sets(instance: str | Path, max_base_path_len: int) -> dict[st
     }
 
 
-# V3B2_FIX_PIPELINE_V1E_RUN_SOLVER_INDENT: normalised one-indent lines inside run_solver after observed IndentationError
 def run_solver(instance: str | Path, max_base_path_len: int, k_max: int, force_exact_k: bool, use_callback: bool) -> ConsolidatedV1eRunSummary:
     sets = build_fragment_sets(instance, max_base_path_len)
     data = sets["data"]

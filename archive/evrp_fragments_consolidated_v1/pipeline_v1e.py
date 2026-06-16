@@ -7,7 +7,7 @@ Environment:
 Role: draft output v1e / remove legacy runtime dependency candidate.
 
 This stage keeps legacy_core.py in the repository as provenance/reference, but
-pipeline_v1e does not import it or pass it through dependency_bridge. Runtime
+pipeline does not import it or pass it through dependency_bridge. Runtime
 uses only fragment_core.py, master_core.py, callback_core.py and
 dependency_bridge.py.
 
@@ -29,7 +29,7 @@ from . import master_core as master
 
 
 @dataclass(frozen=True)
-class ConsolidatedV1eRunSummary:
+class SolverRunSummary:
     package: str
     fragment_core_source_sha256: str | None
     master_core_source_sha256: str | None
@@ -111,7 +111,7 @@ def build_fragment_sets(instance: str | Path, max_base_path_len: int) -> dict[st
     }
 
 
-def run_solver(instance: str | Path, max_base_path_len: int, k_max: int, force_exact_k: bool, use_callback: bool) -> ConsolidatedV1eRunSummary:
+def run_solver(instance: str | Path, max_base_path_len: int, k_max: int, force_exact_k: bool, use_callback: bool) -> SolverRunSummary:
     sets = build_fragment_sets(instance, max_base_path_len)
     data = sets["data"]
     ef = sets["extended_undominated"]
@@ -164,7 +164,7 @@ def run_solver(instance: str | Path, max_base_path_len: int, k_max: int, force_e
         selected_ids = None
         selected_count = None
 
-    return ConsolidatedV1eRunSummary(
+    return SolverRunSummary(
         package="evrp_fragments_consolidated_v1e_remove_legacy_runtime",
         fragment_core_source_sha256=getattr(frag, "FRAGMENT_CORE_SOURCE_SHA256", None),
         master_core_source_sha256=getattr(master, "MASTER_CORE_SOURCE_SHA256", None),
@@ -191,5 +191,5 @@ def run_solver(instance: str | Path, max_base_path_len: int, k_max: int, force_e
     )
 
 
-def summary_to_json(summary: ConsolidatedV1eRunSummary) -> str:
+def summary_to_json(summary: SolverRunSummary) -> str:
     return json.dumps(asdict(summary), indent=2, sort_keys=True)

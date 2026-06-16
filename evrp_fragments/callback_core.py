@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 from .fragment_core import is_station,step
+
+# --- v5g queueing callback import ---
+try:
+    from . import queueing_core as qcore
+except ImportError:  # pragma: no cover - fallback for direct script-style imports
+    import evrp_fragments.queueing_core as qcore
+# --- end v5g queueing callback import ---
 import gurobipy as gp
 from time import perf_counter
 import heapq
@@ -11,12 +18,6 @@ CALLBACK_CORE_GENERATED = True
 
 DP_MAX_STATION_VISITS_PER_LEG = 6
 DP_MAX_LABELS_PER_NODE = 500
-
-def print_dp_path_structure(tag, data, dp_path, dp_dist):
-    stations = [sid for sid in dp_path if is_station(data, sid)]
-    print(f"[{tag}] DP distance = {dp_dist:.6f}")
-    print(f"[{tag}] DP path = {list(dp_path)}")
-    print(f"[{tag}] Stations used ({len(stations)}): {stations}")
 
 def dp_leg_frontier_charge_to_full(data, u_sid, v_sid, t0, E0, max_station_visits=3):
     """
@@ -292,78 +293,8 @@ def _test_fragment_chain_feasibility(data, arcs, chain_arc_ids):
     )
     return ok, fail_i, skeleton
 
-def _diagnose_infeasible_route(route, arcs, data, fail_i):
-    """Print optional diagnostics for an infeasible selected route."""
-    try:
-        skeleton, cover_arc_index = _build_route_skeleton_and_cover(route, arcs, data)
-    except Exception as exc:
-        print(f"[FEAS-CUT-DIAGNOSTIC] unable to build skeleton/cover mapping: {type(exc).__name__}: {exc}")
-        print(f"[FEAS-CUT-DIAGNOSTIC] route_arc_ids={list(route)}")
-        print(f"[FEAS-CUT-DIAGNOSTIC] current whole-route cut size={len(route)}")
-        return
-
-    print("[FEAS-CUT-DIAGNOSTIC] infeasible route detected")
-    print(f"[FEAS-CUT-DIAGNOSTIC] route_arc_ids={list(route)}")
-    print(f"[FEAS-CUT-DIAGNOSTIC] route_len={len(route)} skeleton_len={len(skeleton)} fail_i={fail_i}")
-
-    if fail_i is None or fail_i < 0 or fail_i + 1 >= len(skeleton):
-        print("[FEAS-CUT-DIAGNOSTIC] fail_i is unavailable/out-of-range; diagnostic falls back to whole-route cut context")
-        print(f"[FEAS-CUT-DIAGNOSTIC] current whole-route cut size={len(route)}")
-        return
-
-    failed_u = skeleton[fail_i]
-    failed_v = skeleton[fail_i + 1]
-    print(f"[FEAS-CUT-DIAGNOSTIC] failed_skeleton_edge={failed_u}->{failed_v}")
-
-    if fail_i >= len(cover_arc_index):
-        print(f"[FEAS-CUT-DIAGNOSTIC] cover_arc_index missing fail_i={fail_i}; len(cover_arc_index)={len(cover_arc_index)}")
-        print(f"[FEAS-CUT-DIAGNOSTIC] current whole-route cut size={len(route)}")
-        return
-
-    covering_arc_pos = cover_arc_index[fail_i]
-    if covering_arc_pos < 0 or covering_arc_pos >= len(route):
-        print(f"[FEAS-CUT-DIAGNOSTIC] covering_arc_pos out-of-range: {covering_arc_pos}; route_len={len(route)}")
-        print(f"[FEAS-CUT-DIAGNOSTIC] current whole-route cut size={len(route)}")
-        return
-
-    covering_arc_id = route[covering_arc_pos]
-    prefix = list(route[:covering_arc_pos + 1])
-    print(f"[FEAS-CUT-DIAGNOSTIC] covering_arc_pos={covering_arc_pos} covering_arc_id={covering_arc_id}")
-    print(f"[FEAS-CUT-DIAGNOSTIC] current_full_route_cut_size={len(route)}")
-    print(f"[FEAS-CUT-DIAGNOSTIC] prefix_through_failure_size={len(prefix)} prefix_arc_ids={prefix}")
-
-    best_bad = None
-    tested = 0
-    max_tests = min(len(prefix), FEASIBILITY_CUT_MAX_FRONT_PRUNE_TESTS)
-    for start_pos in range(0, max_tests):
-        candidate = list(prefix[start_pos:])
-        if not candidate:
-            continue
-        try:
-            cand_ok, cand_fail_i, cand_skeleton = _test_fragment_chain_feasibility(data, arcs, candidate)
-        except Exception as exc:
-            print(f"[FEAS-CUT-DIAGNOSTIC] front_prune_test start_pos={start_pos} candidate_size={len(candidate)} ERROR {type(exc).__name__}: {exc}")
-            continue
-        tested += 1
-        print(
-            f"[FEAS-CUT-DIAGNOSTIC] front_prune_test start_pos={start_pos} "
-            f"candidate_size={len(candidate)} candidate_ok={cand_ok} "
-            f"candidate_fail_i={cand_fail_i} candidate_skeleton_len={len(cand_skeleton)} "
-            f"candidate_arc_ids={candidate}"
-        )
-        if not cand_ok:
-            best_bad = candidate
-
-    if best_bad is None:
-        print("[FEAS-CUT-DIAGNOSTIC] no front-pruned infeasible candidate found; current safe cut remains whole route")
-    else:
-        print(f"[FEAS-CUT-DIAGNOSTIC] smallest_observed_front_pruned_bad_size={len(best_bad)}")
-        print(f"[FEAS-CUT-DIAGNOSTIC] smallest_observed_front_pruned_bad_arc_ids={best_bad}")
-        print("[FEAS-CUT-DIAGNOSTIC] diagnostic only: active lazy cut remains unchanged in v3a")
-    print(f"[FEAS-CUT-DIAGNOSTIC] front_prune_tests_run={tested}")
 
 
-FEASIBILITY_CUT_DRY_RUN_ENABLED = False
 FEASIBILITY_CUT_VERBOSE_CANDIDATE_TESTS = False
 FEASIBILITY_CUT_MIN_CHAIN_SIZE = 1
 
@@ -487,13 +418,6 @@ def _record_subtour_mipsol(choose_count):
     s["mipsol_callbacks"] += 1
     s["chosen_arc_count"][int(choose_count)] += 1
 
-def _record_subtour_cut(bad_cycle_arcs):
-    s = SUBTOUR_CUT_SUMMARY
-    s["subtour_cuts"] += 1
-    s["returned_before_route_dp"] += 1
-    s["bad_cycle_size"][int(len(bad_cycle_arcs))] += 1
-    s["reason"]["disconnected_cycle_or_subtour"] += 1
-
 def _record_route_dp_stage(routes):
     s = SUBTOUR_CUT_SUMMARY
     s["reached_route_dp"] += 1
@@ -501,179 +425,6 @@ def _record_route_dp_stage(routes):
     s["routes_checked"] += int(len(routes))
 
 
-# Keep interval search as optional diagnostic code only; do not run it by default.
-FEASIBILITY_CUT_INTERVAL_DRY_RUN_ENABLED = False
-FEASIBILITY_CUT_INTERVAL_PRINT_PER_CUT = False
-FEASIBILITY_CUT_MAX_INTERVAL_TESTS = 200
-FEASIBILITY_CUT_INTERVAL_SUMMARY = {
-    "total": 0,
-    "interval_ok": 0,
-    "interval_better_than_front": 0,
-    "interval_same_as_front": 0,
-    "interval_worse_than_front": 0,
-    "front_missing": 0,
-    "tests_run": Counter(),
-    "interval_size": Counter(),
-    "front_size": Counter(),
-    "reason": Counter(),
-}
-
-
-def _find_contiguous_infeasible_chain(route, arcs, data, fail_i):
-    """Dry-run contiguous-interval candidate finder.
-
-    This optional diagnostic searches contiguous selected-arc intervals that
-    include the arc covering the first failed skeleton edge. Candidates are
-    retested with the route-DP feasibility check before being counted as valid.
-
-    It is disabled by default because prior validation on the hard instance
-    found the same candidate sizes as the active failure-prefix/front-pruned
-    helper in every observed feasibility-cut case.
-    """
-    out = {
-        "ok": False,
-        "reason": None,
-        "route_size": len(route),
-        "candidate_size": None,
-        "candidate_arcs": None,
-        "failed_edge": None,
-        "covering_arc_pos": None,
-        "covering_arc_id": None,
-        "tests_run": 0,
-        "search_exhausted": False,
-        "would_shrink_vs_full": False,
-    }
-    try:
-        skeleton, cover_arc_index = _build_route_skeleton_and_cover(route, arcs, data)
-    except Exception as exc:
-        out["reason"] = f"skeleton_cover_error:{type(exc).__name__}:{exc}"
-        return out
-    if fail_i is None or fail_i < 0 or fail_i + 1 >= len(skeleton):
-        out["reason"] = "fail_i_unavailable_or_out_of_range"
-        return out
-    out["failed_edge"] = f"{skeleton[fail_i]}->{skeleton[fail_i + 1]}"
-    if fail_i >= len(cover_arc_index):
-        out["reason"] = "cover_arc_index_missing_fail_i"
-        return out
-    covering_arc_pos = cover_arc_index[fail_i]
-    if covering_arc_pos < 0 or covering_arc_pos >= len(route):
-        out["reason"] = "covering_arc_pos_out_of_range"
-        return out
-    out["covering_arc_pos"] = covering_arc_pos
-    out["covering_arc_id"] = route[covering_arc_pos]
-
-    route_size = len(route)
-    min_size = max(1, FEASIBILITY_CUT_MIN_CHAIN_SIZE)
-    tests_allowed = max(1, FEASIBILITY_CUT_MAX_INTERVAL_TESTS)
-
-    for size in range(min_size, route_size + 1):
-        start_min = max(0, covering_arc_pos - size + 1)
-        start_max = min(covering_arc_pos, route_size - size)
-        for start_pos in range(start_min, start_max + 1):
-            end_pos = start_pos + size
-            candidate = list(route[start_pos:end_pos])
-            try:
-                cand_ok, cand_fail_i, cand_skeleton = _test_fragment_chain_feasibility(data, arcs, candidate)
-            except Exception as exc:
-                out["tests_run"] += 1
-                if FEASIBILITY_CUT_VERBOSE_CANDIDATE_TESTS:
-                    print(
-                        f"[FEAS-CUT-INTERVAL-DRY-RUN] candidate_test_error "
-                        f"start_pos={start_pos} end_pos={end_pos} candidate_size={len(candidate)} "
-                        f"error={type(exc).__name__}:{exc}"
-                    )
-                if out["tests_run"] >= tests_allowed:
-                    out["reason"] = "interval_test_limit_reached"
-                    return out
-                continue
-            out["tests_run"] += 1
-            if FEASIBILITY_CUT_VERBOSE_CANDIDATE_TESTS:
-                print(
-                    f"[FEAS-CUT-INTERVAL-DRY-RUN] candidate_test "
-                    f"start_pos={start_pos} end_pos={end_pos} candidate_size={len(candidate)} "
-                    f"candidate_ok={cand_ok} candidate_fail_i={cand_fail_i} "
-                    f"candidate_skeleton_len={len(cand_skeleton)} candidate_arc_ids={candidate}"
-                )
-            if not cand_ok:
-                out["ok"] = True
-                out["reason"] = "interval_candidate_retested_infeasible"
-                out["candidate_size"] = len(candidate)
-                out["candidate_arcs"] = candidate
-                out["would_shrink_vs_full"] = len(candidate) < len(route)
-                return out
-            if out["tests_run"] >= tests_allowed:
-                out["reason"] = "interval_test_limit_reached"
-                return out
-    out["search_exhausted"] = True
-    out["reason"] = "no_contiguous_interval_candidate_retested_infeasible"
-    return out
-
-
-def _record_interval_feasibility_dry_run(front_info, interval_info):
-    s = FEASIBILITY_CUT_INTERVAL_SUMMARY
-    s["total"] += 1
-    reason = interval_info.get("reason")
-    s["reason"][str(reason)] += 1
-    s["tests_run"][int(interval_info.get("tests_run", 0))] += 1
-    if interval_info.get("ok"):
-        s["interval_ok"] += 1
-        interval_size = int(interval_info.get("candidate_size"))
-        s["interval_size"][interval_size] += 1
-    else:
-        interval_size = None
-    if front_info and front_info.get("ok") and front_info.get("candidate_size") is not None:
-        front_size = int(front_info.get("candidate_size"))
-        s["front_size"][front_size] += 1
-        if interval_size is not None:
-            if interval_size < front_size:
-                s["interval_better_than_front"] += 1
-            elif interval_size == front_size:
-                s["interval_same_as_front"] += 1
-            else:
-                s["interval_worse_than_front"] += 1
-    else:
-        s["front_missing"] += 1
-
-
-def _dry_run_interval_feasibility_cut(route, arcs, data, fail_i, front_info=None):
-    """Compare interval-pruned and front-pruned feasibility-cut candidates without activating interval cuts."""
-    interval_info = _find_contiguous_infeasible_chain(route, arcs, data, fail_i)
-    _record_interval_feasibility_dry_run(front_info, interval_info)
-    if FEASIBILITY_CUT_INTERVAL_PRINT_PER_CUT:
-        front_size = None if not front_info or not front_info.get("ok") else front_info.get("candidate_size")
-        interval_size = None if not interval_info.get("ok") else interval_info.get("candidate_size")
-        print(
-            "[FEAS-CUT-INTERVAL-DRY-RUN] "
-            f"interval_ok={interval_info.get('ok')} "
-            f"reason={interval_info.get('reason')} "
-            f"full_size={interval_info.get('route_size')} "
-            f"front_size={front_size} "
-            f"interval_size={interval_size} "
-            f"tests_run={interval_info.get('tests_run')} "
-            "active_cut=unchanged"
-        )
-    return interval_info
-
-
-def _print_interval_feasibility_dry_run_summary():
-    if not FEASIBILITY_CUT_INTERVAL_DRY_RUN_ENABLED:
-        return
-    s = FEASIBILITY_CUT_INTERVAL_SUMMARY
-    if s["total"] == 0:
-        print("[FEAS-CUT-INTERVAL-SUMMARY] total=0")
-        return
-    print(
-        "[FEAS-CUT-INTERVAL-SUMMARY] total=" + str(s["total"]) +
-        " interval_ok=" + str(s["interval_ok"]) +
-        " better_than_front=" + str(s["interval_better_than_front"]) +
-        " same_as_front=" + str(s["interval_same_as_front"]) +
-        " worse_than_front=" + str(s["interval_worse_than_front"]) +
-        " front_missing=" + str(s["front_missing"])
-    )
-    print("[FEAS-CUT-INTERVAL-SUMMARY] interval_size_distribution=" + str(dict(sorted(s["interval_size"].items()))))
-    print("[FEAS-CUT-INTERVAL-SUMMARY] front_size_distribution=" + str(dict(sorted(s["front_size"].items()))))
-    print("[FEAS-CUT-INTERVAL-SUMMARY] tests_run_distribution=" + str(dict(sorted(s["tests_run"].items()))))
-    print("[FEAS-CUT-INTERVAL-SUMMARY] reason_distribution=" + str(dict(s["reason"].most_common())))
 
 
 def _find_front_pruned_infeasible_chain(route, arcs, data, fail_i):
@@ -690,10 +441,6 @@ def _find_front_pruned_infeasible_chain(route, arcs, data, fail_i):
     infeasible. If those checks fail, the callback falls back to the full-route
     feasibility cut.
 
-    The interval dry run tested contiguous intervals containing the failed
-    covering arc. It found no smaller candidate than this failure-
-    prefix/front-pruned helper for that run, so interval search remains optional
-    diagnostic code rather than active callback behaviour.
     """
     out = {
         "ok": False,
@@ -780,35 +527,7 @@ def _find_front_pruned_infeasible_chain(route, arcs, data, fail_i):
     _record_pruning_summary(len(route), len(prefix), len(best_bad), out["reason"], True)
     return out
 
-def _dry_run_front_pruned_feasibility_cut(route, arcs, data, fail_i):
-    """Print optional dry-run information for the front-pruned feasibility cut."""
-    info = _find_front_pruned_infeasible_chain(route, arcs, data, fail_i)
-    if not info["ok"]:
-        print(
-            "[FEAS-CUT-DRY-RUN] no_guarded_candidate "
-            f"reason={info['reason']} route_size={info['route_size']} "
-            f"prefix_size={info['prefix_size']} tests_run={info['tests_run']} "
-            "active_cut=full_route"
-        )
-        return None
-
-    print(
-        "[FEAS-CUT-DRY-RUN] guarded_candidate "
-        f"failed_edge={info['failed_edge']} "
-        f"covering_arc_pos={info['covering_arc_pos']} "
-        f"covering_arc_id={info['covering_arc_id']} "
-        f"full_size={info['route_size']} "
-        f"prefix_size={info['prefix_size']} "
-        f"candidate_size={info['candidate_size']} "
-        f"shrink_vs_full={info['would_shrink_vs_full']} "
-        f"shrink_vs_prefix={info['would_shrink_vs_prefix']} "
-        f"candidate_arcs={info['candidate_arcs']} "
-        "active_cut=full_route"
-    )
-    return info
-
 # Active feasibility cut remains unchanged: full-route cut is still applied below.
-
 
 ACTIVE_FEASIBILITY_CUT_ENABLED = True
 FEASIBILITY_CUT_PRINT_PER_CUT = False
@@ -850,7 +569,6 @@ def _print_feasibility_cut_summary():
 atexit.register(_print_feasibility_cut_summary)
 atexit.register(_print_pruning_summary)
 atexit.register(_print_solver_bound_summary)
-atexit.register(_print_interval_feasibility_dry_run_summary)
 
 # Defines component-summary diagnostics before atexit registration. This fixes
 # definition in callback_core.py.
@@ -874,10 +592,8 @@ if 'SUBTOUR_COMPONENT_SUMMARY' not in globals():
         "smallest_component_arc_size": Counter(),
     }
 
-# Adds dry-run comparison of front-pruned and contiguous-interval feasibility-cut candidates.
 # Active lazy-cut selection remains unchanged in this overlay.
 
-# Interval dry run is retained as optional diagnostic code but disabled by default.
 # Active lazy-cut selection remains the guarded failure-prefix/front-pruned feasibility cut.
 
 # Adds bounded-run diagnostics: front/rear pruning decomposition and solver bound snapshots.
@@ -902,23 +618,12 @@ if 'SUBTOUR_CUT_SUMMARY' not in globals():
         "reason": Counter(),
     }
 
-if '_record_mipsol_callback' not in globals():
-    def _record_mipsol_callback(chosen_count):
-        SUBTOUR_CUT_SUMMARY["mipsol_callbacks"] += 1
-        SUBTOUR_CUT_SUMMARY["chosen_arc_count"][int(chosen_count)] += 1
-
 if '_record_subtour_lazy_cut' not in globals():
     def _record_subtour_lazy_cut(cut_size, bad_tail_count=None):
         SUBTOUR_CUT_SUMMARY["subtour_cuts"] += 1
         SUBTOUR_CUT_SUMMARY["returned_before_route_dp"] += 1
         SUBTOUR_CUT_SUMMARY["bad_cycle_size"][int(cut_size)] += 1
         SUBTOUR_CUT_SUMMARY["reason"]["disconnected_cycle_or_subtour"] += 1
-
-if '_record_route_dp_reached' not in globals():
-    def _record_route_dp_reached(route_count):
-        SUBTOUR_CUT_SUMMARY["reached_route_dp"] += 1
-        SUBTOUR_CUT_SUMMARY["routes_checked"] += int(route_count)
-        SUBTOUR_CUT_SUMMARY["route_count"][int(route_count)] += 1
 
 if '_print_subtour_cut_summary' not in globals():
     def _print_subtour_cut_summary():
@@ -1016,6 +721,158 @@ def _print_subtour_component_summary():
     print("[SUBTOUR-COMPONENT-SUMMARY] largest_component_arc_size_distribution=" + str(dict(sorted(s["largest_component_arc_size"].items()))))
     print("[SUBTOUR-COMPONENT-SUMMARY] smallest_component_arc_size_distribution=" + str(dict(sorted(s["smallest_component_arc_size"].items()))))
 
+# --- v5j queueing callback cut/reporting refinement helpers ---
+QUEUEING_CALLBACK_ENABLED = True
+QUEUEING_CALLBACK_PRINT_PER_INCUMBENT = False
+QUEUEING_CALLBACK_PRINT_PER_CUT = True
+QUEUEING_CALLBACK_PRINT_DUPLICATE_CUTS = False
+QUEUEING_CALLBACK_SUMMARY_ENABLED = True
+
+_QUEUEING_CALLBACK_STATS = {
+    "evaluations": 0,
+    "feasible_no_delay": 0,
+    "feasible_with_delay": 0,
+    "infeasible": 0,
+    "cuts": 0,
+    "fallback_cuts": 0,
+    "duplicate_cut_candidates": 0,
+    "duplicate_cut_prints_suppressed": 0,
+    "unique_cut_patterns": 0,
+    "total_delay_positive": 0,
+    "total_service_delay_positive": 0,
+    "resource_wait_positive": 0,
+    "resource_wait_event_positive": 0,
+    "max_total_delay": 0.0,
+    "max_total_service_delay": 0.0,
+    "max_resource_wait_time": 0.0,
+    "max_resource_wait_event_count": 0,
+    "sum_resource_wait_time": 0.0,
+    "cut_size_distribution": {},
+    "reason_distribution": {},
+    "delayed_service_count_distribution": {},
+    "resource_wait_event_count_distribution": {},
+    "resolved_overlap_count_distribution": {},
+    "cut_pattern_counts": {},
+}
+
+_QUEUEING_CALLBACK_SEEN_CUT_KEYS = set()
+
+
+def _queueing_bump_distribution(name, key):
+    dist = _QUEUEING_CALLBACK_STATS.setdefault(name, {})
+    dist[key] = dist.get(key, 0) + 1
+
+
+def _queueing_cut_key(arcs):
+    return tuple(sorted(int(aid) for aid in arcs))
+
+
+def _record_queueing_callback_evaluation(q_eval):
+    _QUEUEING_CALLBACK_STATS["evaluations"] += 1
+    _queueing_bump_distribution("reason_distribution", getattr(q_eval, "reason", "unknown"))
+
+    if getattr(q_eval, "ok", False):
+        if getattr(q_eval, "total_service_delay", 0.0) > 1e-6:
+            _QUEUEING_CALLBACK_STATS["feasible_with_delay"] += 1
+        else:
+            _QUEUEING_CALLBACK_STATS["feasible_no_delay"] += 1
+    else:
+        _QUEUEING_CALLBACK_STATS["infeasible"] += 1
+
+    total_delay = float(getattr(q_eval, "total_delay", 0.0) or 0.0)
+    total_service_delay = float(getattr(q_eval, "total_service_delay", 0.0) or 0.0)
+    resource_wait_time = float(getattr(q_eval, "resource_wait_time", 0.0) or 0.0)
+    resource_wait_event_count = int(getattr(q_eval, "resource_wait_event_count", 0) or 0)
+    resolved_overlap_count = int(getattr(q_eval, "resolved_overlap_count", resource_wait_event_count) or 0)
+
+    if total_delay > 1e-6:
+        _QUEUEING_CALLBACK_STATS["total_delay_positive"] += 1
+    if total_service_delay > 1e-6:
+        _QUEUEING_CALLBACK_STATS["total_service_delay_positive"] += 1
+    if resource_wait_time > 1e-6:
+        _QUEUEING_CALLBACK_STATS["resource_wait_positive"] += 1
+    if resource_wait_event_count > 0:
+        _QUEUEING_CALLBACK_STATS["resource_wait_event_positive"] += 1
+
+    _QUEUEING_CALLBACK_STATS["max_total_delay"] = max(_QUEUEING_CALLBACK_STATS["max_total_delay"], total_delay)
+    _QUEUEING_CALLBACK_STATS["max_total_service_delay"] = max(_QUEUEING_CALLBACK_STATS["max_total_service_delay"], total_service_delay)
+    _QUEUEING_CALLBACK_STATS["max_resource_wait_time"] = max(_QUEUEING_CALLBACK_STATS["max_resource_wait_time"], resource_wait_time)
+    _QUEUEING_CALLBACK_STATS["max_resource_wait_event_count"] = max(_QUEUEING_CALLBACK_STATS["max_resource_wait_event_count"], resource_wait_event_count)
+    _QUEUEING_CALLBACK_STATS["sum_resource_wait_time"] += resource_wait_time
+
+    _queueing_bump_distribution("delayed_service_count_distribution", int(getattr(q_eval, "delayed_service_count", 0) or 0))
+    _queueing_bump_distribution("resource_wait_event_count_distribution", resource_wait_event_count)
+    _queueing_bump_distribution("resolved_overlap_count_distribution", resolved_overlap_count)
+
+
+def _record_queueing_callback_cut(cut_arcs, fallback):
+    cut_key = _queueing_cut_key(cut_arcs)
+    pattern_counts = _QUEUEING_CALLBACK_STATS.setdefault("cut_pattern_counts", {})
+    pattern_counts[cut_key] = pattern_counts.get(cut_key, 0) + 1
+
+    duplicate = cut_key in _QUEUEING_CALLBACK_SEEN_CUT_KEYS
+    if duplicate:
+        _QUEUEING_CALLBACK_STATS["duplicate_cut_candidates"] += 1
+    else:
+        _QUEUEING_CALLBACK_SEEN_CUT_KEYS.add(cut_key)
+        _QUEUEING_CALLBACK_STATS["unique_cut_patterns"] = len(_QUEUEING_CALLBACK_SEEN_CUT_KEYS)
+
+    _QUEUEING_CALLBACK_STATS["cuts"] += 1
+    if fallback:
+        _QUEUEING_CALLBACK_STATS["fallback_cuts"] += 1
+    _queueing_bump_distribution("cut_size_distribution", len(cut_key))
+    return duplicate, pattern_counts[cut_key]
+
+
+def _format_top_queueing_cut_patterns(limit=10):
+    pattern_counts = _QUEUEING_CALLBACK_STATS.get("cut_pattern_counts", {})
+    ranked = sorted(pattern_counts.items(), key=lambda kv: (-kv[1], len(kv[0]), kv[0]))
+    return [(list(pattern), count) for pattern, count in ranked[:limit]]
+
+
+def _print_queueing_callback_summary():
+    if not QUEUEING_CALLBACK_SUMMARY_ENABLED:
+        return
+    stats = _QUEUEING_CALLBACK_STATS
+    print(
+        "[QUEUEING-CALLBACK-SUMMARY]",
+        "evaluations=", stats.get("evaluations", 0),
+        "feasible_no_delay=", stats.get("feasible_no_delay", 0),
+        "feasible_with_delay=", stats.get("feasible_with_delay", 0),
+        "infeasible=", stats.get("infeasible", 0),
+        "cuts=", stats.get("cuts", 0),
+        "fallback_cuts=", stats.get("fallback_cuts", 0),
+        "unique_cut_patterns=", stats.get("unique_cut_patterns", 0),
+        "duplicate_cut_candidates=", stats.get("duplicate_cut_candidates", 0),
+        "duplicate_cut_prints_suppressed=", stats.get("duplicate_cut_prints_suppressed", 0),
+        "positive_delay=", stats.get("total_delay_positive", 0),
+        "positive_service_delay=", stats.get("total_service_delay_positive", 0),
+        "positive_resource_wait=", stats.get("resource_wait_positive", 0),
+        "positive_resource_wait_events=", stats.get("resource_wait_event_positive", 0),
+        "max_total_delay=", stats.get("max_total_delay", 0.0),
+        "max_total_service_delay=", stats.get("max_total_service_delay", 0.0),
+        "max_resource_wait_time=", stats.get("max_resource_wait_time", 0.0),
+        "max_resource_wait_event_count=", stats.get("max_resource_wait_event_count", 0),
+        "sum_resource_wait_time=", stats.get("sum_resource_wait_time", 0.0),
+    )
+    print("[QUEUEING-CALLBACK-SUMMARY] reason_distribution=", stats.get("reason_distribution", {}))
+    print("[QUEUEING-CALLBACK-SUMMARY] delayed_service_count_distribution=", stats.get("delayed_service_count_distribution", {}))
+    print("[QUEUEING-CALLBACK-SUMMARY] resource_wait_event_count_distribution=", stats.get("resource_wait_event_count_distribution", {}))
+    print("[QUEUEING-CALLBACK-SUMMARY] resolved_overlap_count_distribution=", stats.get("resolved_overlap_count_distribution", {}))
+    print("[QUEUEING-CALLBACK-SUMMARY] cut_size_distribution=", stats.get("cut_size_distribution", {}))
+    print("[QUEUEING-CALLBACK-SUMMARY] top_cut_patterns=", _format_top_queueing_cut_patterns())
+
+
+def _register_queueing_callback_summary():
+    global _QUEUEING_CALLBACK_SUMMARY_REGISTERED
+    if globals().get("_QUEUEING_CALLBACK_SUMMARY_REGISTERED", False):
+        return
+    atexit.register(_print_queueing_callback_summary)
+    _QUEUEING_CALLBACK_SUMMARY_REGISTERED = True
+
+
+_register_queueing_callback_summary()
+# --- end v5j queueing callback cut/reporting refinement helpers ---
 def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
     if where == gp.GRB.Callback.MIP:
         _record_solver_bound_snapshot(model, where)
@@ -1069,6 +926,64 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
             model.cbLazy(gp.quicksum(x_vars[a_id] for a_id in bad_cycle_arcs) <= len(bad_cycle_arcs) - 1)
         return
 
+    # v5g queueing callback diagnostic and infeasibility hook.
+    # v5j refinement: fingerprint cut patterns and suppress duplicate cut prints.
+    # This runs after disconnected subtour/component cuts and before the energy-DP.
+    if QUEUEING_CALLBACK_ENABLED:
+        q_eval = qcore.evaluate_queueing_for_selected_arcs(
+            data=data,
+            arcs=arcs,
+            depot_u=depot_u,
+            selected_arc_ids=choose,
+        )
+        _record_queueing_callback_evaluation(q_eval)
+
+        if QUEUEING_CALLBACK_PRINT_PER_INCUMBENT and (
+            (not q_eval.ok) or q_eval.total_service_delay > 1e-6
+        ):
+            print(
+                "[QUEUEING-CALLBACK]",
+                "ok=", q_eval.ok,
+                "reason=", q_eval.reason,
+                "routes=", q_eval.route_count,
+                "activities=", q_eval.activity_count,
+                "services=", q_eval.service_count,
+                "total_delay=", q_eval.total_delay,
+                "service_delay=", q_eval.total_service_delay,
+                "resource_wait=", getattr(q_eval, "resource_wait_time", 0.0),
+                "resource_wait_events=", getattr(q_eval, "resource_wait_event_count", 0),
+                "resolved_overlaps=", getattr(q_eval, "resolved_overlap_count", 0),
+                "delayed_services=", q_eval.delayed_service_count,
+                "conflicts=", q_eval.conflict_count,
+                "infeasible_arcs=", list(q_eval.infeasible_arc_ids),
+                "resolved_delay_arcs=", list(q_eval.resolved_delay_arc_ids),
+            )
+
+        if not q_eval.ok:
+            S_queue = [aid for aid in q_eval.infeasible_arc_ids if aid in x_vars]
+            fallback = False
+            if not S_queue:
+                S_queue = list(choose)
+                fallback = True
+            if S_queue:
+                duplicate, occurrence_count = _record_queueing_callback_cut(S_queue, fallback)
+                should_print_cut = QUEUEING_CALLBACK_PRINT_PER_CUT and (
+                    QUEUEING_CALLBACK_PRINT_DUPLICATE_CUTS or not duplicate
+                )
+                if duplicate and QUEUEING_CALLBACK_PRINT_PER_CUT and not QUEUEING_CALLBACK_PRINT_DUPLICATE_CUTS:
+                    _QUEUEING_CALLBACK_STATS["duplicate_cut_prints_suppressed"] += 1
+                if should_print_cut:
+                    print(
+                        "[QUEUEING-CUT-ACTIVE]",
+                        "cut_size=", len(S_queue),
+                        "fallback=", fallback,
+                        "duplicate=", duplicate,
+                        "occurrence=", occurrence_count,
+                        "reason=", q_eval.reason,
+                        "cut_arcs=", S_queue,
+                    )
+                model.cbLazy(gp.quicksum(x_vars[aid] for aid in S_queue) <= len(S_queue) - 1)
+                return
     # extract routes starting from depot
     routes = []
     for a_id in out_map.get(depot_u, []):
@@ -1118,8 +1033,6 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
         if not ok:
             # Active guarded front-pruned feasibility cut.
             candidate_info = _find_front_pruned_infeasible_chain(route, arcs, data, fail_i)
-            if FEASIBILITY_CUT_INTERVAL_DRY_RUN_ENABLED:
-                _dry_run_interval_feasibility_cut(route, arcs, data, fail_i, candidate_info)
             if ACTIVE_FEASIBILITY_CUT_ENABLED and candidate_info.get('ok') and candidate_info.get('candidate_arcs') and candidate_info.get('candidate_size', len(route)) < len(route):
                 S_feas = list(candidate_info['candidate_arcs'])
                 fallback = False

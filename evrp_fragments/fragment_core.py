@@ -9,7 +9,7 @@ import math
 import os
 from time import perf_counter
 
-# Compatibility marker used by pipeline_v1e._ensure_generated().
+# Compatibility marker used by pipeline._ensure_generated().
 # The module was originally generated, but is now maintained directly.
 FRAGMENT_CORE_GENERATED = True
 

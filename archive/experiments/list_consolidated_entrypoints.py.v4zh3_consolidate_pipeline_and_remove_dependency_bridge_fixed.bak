@@ -25,7 +25,7 @@ def main() -> None:
         "evrp_fragments_consolidated_v1/master_core.py",
         "evrp_fragments_consolidated_v1/callback_core.py",
         "evrp_fragments_consolidated_v1/dependency_bridge.py",
-        "evrp_fragments_consolidated_v1/pipeline.py",
+        "evrp_fragments_consolidated_v1/pipeline_v1e.py",
         "evrp_fragments_consolidated_v1/pipeline.py",
     ):
         print(f"  {path}")

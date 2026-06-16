@@ -1,24 +1,178 @@
 """Canonical consolidated solver pipeline.
-
 Environment:
 - Python 3.12
 - gurobipy available in the target environment
+Role: canonical runtime pipeline.
 
-Role: draft output v1f / canonical runner.
-
-This module is a stable alias over the v1e runtime path. It does not alter
-algorithm bodies, callback signatures, DP logic, route extraction or model
-formulation. It exists to provide a non-versioned canonical import target while
-retaining the versioned v1e implementation for auditability.
+This module is the canonical runtime entry point for the fragment-based EVRP
+solver. It coordinates fragment generation, master-model construction and the
+callback-based route-DP recourse layer using explicit module imports.
 """
-
 from __future__ import annotations
 
-from .pipeline_v1e import ConsolidatedV1eRunSummary, build_fragment_sets, run_solver, summary_to_json
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
 
-__all__ = [
-    "ConsolidatedV1eRunSummary",
-    "build_fragment_sets",
-    "run_solver",
-    "summary_to_json",
-]
+from . import callback_core as cbcore
+from . import fragment_core as frag
+from . import master_core as master
+
+
+@dataclass(frozen=True)
+class SolverRunSummary:
+    package: str
+    fragment_core_source_sha256: str | None
+    master_core_source_sha256: str | None
+    callback_core_source_sha256: str | None
+    instance: str
+    max_base_path_len: int
+    k_max: int
+    force_exact_k: bool
+    use_callback: bool
+    base_paths: int
+    restricted_raw: int
+    restricted_dedup: int
+    restricted_meta: int
+    restricted_undominated: int
+    extended_raw: int
+    extended_dedup: int
+    extended_meta: int
+    extended_undominated: int
+    objective: float | None
+    theta: float | None
+    selected_arc_count: int | None
+    selected_arc_ids: list[int] | None
+    status: int | None
+
+
+SolverRunSummary = SolverRunSummary
+
+
+def _ensure_generated() -> None:
+    if not bool(getattr(frag, "FRAGMENT_CORE_GENERATED", False)):
+        raise RuntimeError("fragment_core.py has not been generated or initialised")
+    if not bool(getattr(master, "MASTER_CORE_GENERATED", False)):
+        raise RuntimeError("master_core.py has not been generated or initialised")
+    if not bool(getattr(cbcore, "CALLBACK_CORE_GENERATED", False)):
+        raise RuntimeError("callback_core.py has not been generated or initialised")
+
+
+def _get_var_value(var: Any) -> float:
+    for attr in ("X", "x"):
+        if hasattr(var, attr):
+            return float(getattr(var, attr))
+    return float(var)
+
+
+def _safe_model_attr(model: Any, *names: str) -> Any:
+    for name in names:
+        if hasattr(model, name):
+            try:
+                return getattr(model, name)
+            except Exception:
+                continue
+    return None
+
+
+
+def build_fragment_sets(instance: str | Path, max_base_path_len: int) -> dict[str, Any]:
+    _ensure_generated()
+    data = frag.read_instance(str(instance))
+    base_paths, base_path_metadata = frag.enumerate_base_paths(data, max_base_path_len)
+    restricted_raw = frag.enumerate_fragments(data, base_paths)
+    restricted_dedup = frag.dedup_exact(restricted_raw)
+    restricted_meta = frag.attach_metadata(data, restricted_dedup)
+    restricted_undominated = frag.dominance_filter(restricted_meta)
+    extended_raw = frag.extend_all_fragments(data, restricted_undominated)
+    extended_dedup = frag.dedup_exact(extended_raw)
+    extended_meta = frag.attach_metadata(data, extended_dedup, exclude_last_ef=True)
+    extended_undominated = frag.dominance_filter(extended_meta)
+    return {
+        "data": data,
+        "base_paths": base_paths,
+        "base_path_metadata": base_path_metadata,
+        "restricted_raw": restricted_raw,
+        "restricted_dedup": restricted_dedup,
+        "restricted_meta": restricted_meta,
+        "restricted_undominated": restricted_undominated,
+        "extended_raw": extended_raw,
+        "extended_dedup": extended_dedup,
+        "extended_meta": extended_meta,
+        "extended_undominated": extended_undominated,
+    }
+
+
+def run_solver(
+    instance: str | Path,
+    max_base_path_len: int,
+    k_max: int,
+    force_exact_k: bool = False,
+    use_callback: bool = True,
+    time_limit_sec: float | None = None,
+) -> SolverRunSummary:
+    sets = build_fragment_sets(instance, max_base_path_len)
+    data = sets["data"]
+    ef = sets["extended_undominated"]
+    model, x_vars, arcs, node_id, depot_u, arc_by_id, theta, big_m = master.build_master_model(
+        data,
+        ef,
+        k_max,
+        force_exact_K=force_exact_k,
+    )
+    if time_limit_sec is not None and float(time_limit_sec) > 0:
+        model.Params.TimeLimit = float(time_limit_sec)
+    if use_callback:
+        model.optimize(
+            lambda cb_model, where: cbcore.callback(
+                cb_model, where, x_vars, arcs, node_id, depot_u, data, theta, big_m
+            )
+        )
+    else:
+        model.optimize()
+    status = int(getattr(model, "Status", getattr(model, "status", 0)))
+    objective_raw = _safe_model_attr(model, "ObjVal", "objVal")
+    objective = None if objective_raw is None else float(objective_raw)
+    try:
+        theta_value = _get_var_value(theta)
+    except Exception:
+        theta_value = None
+    try:
+        selected_arc_ids = sorted(aid for aid, var in x_vars.items() if _get_var_value(var) > 0.5)
+        selected_arc_count = len(selected_arc_ids)
+    except Exception:
+        selected_arc_ids = None
+        selected_arc_count = None
+    return SolverRunSummary(
+        package="evrp_fragments_canonical",
+        fragment_core_source_sha256=getattr(frag, "FRAGMENT_CORE_SOURCE_SHA256", getattr(frag, "SOURCE_SHA256", None)),
+        master_core_source_sha256=getattr(master, "MASTER_CORE_SOURCE_SHA256", getattr(master, "SOURCE_SHA256", None)),
+        callback_core_source_sha256=getattr(cbcore, "CALLBACK_CORE_SOURCE_SHA256", getattr(cbcore, "SOURCE_SHA256", None)),
+        instance=str(instance),
+        max_base_path_len=int(max_base_path_len),
+        k_max=int(k_max),
+        force_exact_k=bool(force_exact_k),
+        use_callback=bool(use_callback),
+        base_paths=len(sets["base_paths"]),
+        restricted_raw=len(sets["restricted_raw"]),
+        restricted_dedup=len(sets["restricted_dedup"]),
+        restricted_meta=len(sets["restricted_meta"]),
+        restricted_undominated=len(sets["restricted_undominated"]),
+        extended_raw=len(sets["extended_raw"]),
+        extended_dedup=len(sets["extended_dedup"]),
+        extended_meta=len(sets["extended_meta"]),
+        extended_undominated=len(sets["extended_undominated"]),
+        objective=objective,
+        theta=theta_value,
+        selected_arc_count=selected_arc_count,
+        selected_arc_ids=selected_arc_ids,
+        status=status,
+    )
+
+
+def summary_to_json(summary: SolverRunSummary) -> str:
+    return json.dumps(asdict(summary), indent=2, sort_keys=True)
+
+
+__all__ = ["SolverRunSummary", "build_fragment_sets", "run_solver", "summary_to_json"]

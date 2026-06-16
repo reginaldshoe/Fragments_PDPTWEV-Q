@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from evrp_fragments_consolidated_v1.pipeline import run_solver, summary_to_json
+from evrp_fragments_consolidated_v1.pipeline_v1e import run_solver, summary_to_json
 
 
 def parse_args() -> argparse.Namespace:

@@ -31,7 +31,7 @@ RUNTIME_FILES = [
     "master_core.py",
     "callback_core.py",
     "dependency_bridge.py",
-    "pipeline.py",
+    "pipeline_v1e.py",
     "pipeline.py",
 ]
 

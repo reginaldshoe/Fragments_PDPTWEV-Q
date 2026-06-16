@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Validate selected solver arcs using evrp_fragments.solution_helpers.
 
-v4z7 fixes the runner so it handles pipeline_v1e.run_solver returning either a dict
-or a dataclass / object-style run summary such as ConsolidatedV1eRunSummary.
+v4z7 fixes the runner so it handles pipeline.run_solver returning either a dict
+or a dataclass / object-style run summary such as SolverRunSummary.
 """
 from __future__ import annotations
 
@@ -184,7 +184,7 @@ def main() -> int:
     parser.add_argument("--output", default="selected_route_validation.json")
     args = parser.parse_args()
 
-    from evrp_fragments.pipeline_v1e import build_fragment_sets, run_solver
+    from evrp_fragments.pipeline import build_fragment_sets, run_solver
     from evrp_fragments.fragment_core import read_instance
     from evrp_fragments import solution_helpers as helpers
 

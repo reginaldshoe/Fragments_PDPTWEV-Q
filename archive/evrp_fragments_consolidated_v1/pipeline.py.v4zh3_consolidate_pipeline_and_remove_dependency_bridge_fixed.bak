@@ -14,10 +14,10 @@ retaining the versioned v1e implementation for auditability.
 
 from __future__ import annotations
 
-from .pipeline import SolverRunSummary, build_fragment_sets, run_solver, summary_to_json
+from .pipeline_v1e import ConsolidatedV1eRunSummary, build_fragment_sets, run_solver, summary_to_json
 
 __all__ = [
-    "SolverRunSummary",
+    "ConsolidatedV1eRunSummary",
     "build_fragment_sets",
     "run_solver",
     "summary_to_json",
