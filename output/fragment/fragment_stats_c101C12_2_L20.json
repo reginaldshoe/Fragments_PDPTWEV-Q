@@ -1,0 +1,282 @@
+{
+  "base_paths": {
+    "dominance_events_from_log": [
+      {
+        "after": 86,
+        "before": 86,
+        "depth": 0,
+        "keys": 86,
+        "max_bucket_size": 1,
+        "removal_rate": 0.0,
+        "removed": 0,
+        "source": "local_newwork"
+      },
+      {
+        "after": 206,
+        "before": 372,
+        "depth": 1,
+        "keys": 165,
+        "max_bucket_size": 4,
+        "removal_rate": 0.44623655913978494,
+        "removed": 166,
+        "source": "local_newwork"
+      },
+      {
+        "after": 452,
+        "before": 824,
+        "depth": 2,
+        "keys": 258,
+        "max_bucket_size": 10,
+        "removal_rate": 0.45145631067961167,
+        "removed": 372,
+        "source": "local_newwork"
+      },
+      {
+        "after": 820,
+        "before": 1516,
+        "depth": 3,
+        "keys": 382,
+        "max_bucket_size": 14,
+        "removal_rate": 0.45910290237467016,
+        "removed": 696,
+        "source": "local_newwork"
+      },
+      {
+        "after": 1260,
+        "before": 2148,
+        "depth": 4,
+        "keys": 440,
+        "max_bucket_size": 22,
+        "removal_rate": 0.4134078212290503,
+        "removed": 888,
+        "source": "local_newwork"
+      },
+      {
+        "after": 1752,
+        "before": 2932,
+        "depth": 5,
+        "keys": 338,
+        "max_bucket_size": 26,
+        "removal_rate": 0.4024556616643929,
+        "removed": 1180,
+        "source": "local_newwork"
+      },
+      {
+        "after": 2184,
+        "before": 3956,
+        "depth": 6,
+        "keys": 292,
+        "max_bucket_size": 38,
+        "removal_rate": 0.44792719919110213,
+        "removed": 1772,
+        "source": "local_newwork"
+      },
+      {
+        "after": 2120,
+        "before": 4368,
+        "depth": 7,
+        "keys": 200,
+        "max_bucket_size": 108,
+        "removal_rate": 0.5146520146520146,
+        "removed": 2248,
+        "source": "local_newwork"
+      },
+      {
+        "after": 1336,
+        "before": 2960,
+        "depth": 8,
+        "keys": 148,
+        "max_bucket_size": 124,
+        "removal_rate": 0.5486486486486486,
+        "removed": 1624,
+        "source": "local_newwork"
+      },
+      {
+        "after": 312,
+        "before": 696,
+        "depth": 9,
+        "keys": 28,
+        "max_bucket_size": 48,
+        "removal_rate": 0.5517241379310345,
+        "removed": 384,
+        "source": "local_newwork"
+      },
+      {
+        "after": 0,
+        "before": 0,
+        "depth": 10,
+        "keys": 0,
+        "max_bucket_size": 0,
+        "removal_rate": null,
+        "removed": 0,
+        "source": "local_newwork"
+      }
+    ],
+    "generation_time_sec": 0.2730989999836311,
+    "length_distribution": {
+      "10": 632,
+      "11": 312,
+      "2": 10,
+      "3": 16,
+      "4": 16,
+      "5": 112,
+      "6": 156,
+      "7": 360,
+      "8": 328,
+      "9": 520
+    },
+    "metadata": {
+      "capacity": 5790,
+      "energy": 5748,
+      "prev_station": 5430
+    },
+    "metadata_depth_layers": null,
+    "metadata_dominance_statistics": null,
+    "metadata_pruning_by_reason": null,
+    "metadata_time_like_fields": null,
+    "total": 2462
+  },
+  "captured_log_summary": {
+    "base_path_dominance_event_count": 11,
+    "line_count": 11
+  },
+  "extended_fragments": {
+    "dedup": 19586,
+    "dedup_length_distribution": {
+      "10": 688,
+      "11": 400,
+      "3": 590,
+      "4": 1788,
+      "5": 3864,
+      "6": 4852,
+      "7": 3320,
+      "8": 3284,
+      "9": 800
+    },
+    "deduplication": {
+      "input": 19586,
+      "output": 19586,
+      "removal_rate": 0.0,
+      "removed": 0
+    },
+    "dominance": {
+      "input": 19586,
+      "output": 12466,
+      "removal_rate": 0.3635249668130297,
+      "removed": 7120
+    },
+    "extension_statistics": {
+      "accepted_total": 19586,
+      "depot_extensions": 1126,
+      "direct_pickup_extensions": 18460,
+      "failed_extensions": null,
+      "failed_extensions_note": "Not exposed by extend_all_fragments(); this script reports accepted extended fragments only.",
+      "missing_ext_to": 0,
+      "other_extensions": 0,
+      "pickup_extensions": 18460,
+      "station_mediated_pickup_extensions": 0
+    },
+    "generation_time_sec": 0.06169699999736622,
+    "metadata": 19586,
+    "raw": 19586,
+    "raw_length_distribution": {
+      "10": 688,
+      "11": 400,
+      "3": 590,
+      "4": 1788,
+      "5": 3864,
+      "6": 4852,
+      "7": 3320,
+      "8": 3284,
+      "9": 800
+    },
+    "total_processing_time_sec": 0.39029419992584735,
+    "undominated": 12466,
+    "undominated_length_distribution": {
+      "10": 224,
+      "11": 160,
+      "3": 590,
+      "4": 1452,
+      "5": 2684,
+      "6": 3148,
+      "7": 2212,
+      "8": 1756,
+      "9": 240
+    }
+  },
+  "fragment_time_limit_sec": 1800.0,
+  "instance": ".\\instances\\c101C12_2.txt",
+  "max_base_path_len": 20,
+  "restricted_fragments": {
+    "dedup": 9334,
+    "dedup_length_distribution": {
+      "10": 632,
+      "11": 312,
+      "2": 108,
+      "3": 386,
+      "4": 808,
+      "5": 1400,
+      "6": 1516,
+      "7": 1780,
+      "8": 1312,
+      "9": 1080
+    },
+    "deduplication": {
+      "input": 19970,
+      "output": 9334,
+      "removal_rate": 0.5325988983475213,
+      "removed": 10636
+    },
+    "dominance": {
+      "input": 9334,
+      "output": 2548,
+      "removal_rate": 0.7270194986072424,
+      "removed": 6786
+    },
+    "generation_time_sec": 0.06255219999002293,
+    "metadata": 9334,
+    "pruning_by_reason": null,
+    "pruning_by_reason_note": "Not exposed by the current restricted-fragment enumeration interface.",
+    "raw": 19970,
+    "raw_length_distribution": {
+      "10": 632,
+      "11": 312,
+      "2": 974,
+      "3": 2464,
+      "4": 2408,
+      "5": 3840,
+      "6": 3164,
+      "7": 3136,
+      "8": 1704,
+      "9": 1336
+    },
+    "total_processing_time_sec": 0.23570580006344244,
+    "undominated": 2548,
+    "undominated_length_distribution": {
+      "10": 40,
+      "2": 108,
+      "3": 288,
+      "4": 512,
+      "5": 616,
+      "6": 424,
+      "7": 384,
+      "8": 104,
+      "9": 72
+    }
+  },
+  "script": "run_fragment_generation_stats.py",
+  "stage_times_sec": {
+    "base_path_generation": 0.2730989999836311,
+    "extended_dedup": 0.020789099973626435,
+    "extended_dominance": 0.05030299996724352,
+    "extended_generation": 0.06169699999736622,
+    "extended_metadata": 0.2575050999876112,
+    "read_instance": 0.021919099963270128,
+    "restricted_dedup": 0.022747999988496304,
+    "restricted_dominance": 0.021279900043737143,
+    "restricted_generation": 0.06255219999002293,
+    "restricted_metadata": 0.12912570004118606
+  },
+  "stats_schema_version": "v6b0",
+  "total_fragment_pipeline_time_sec": 0.9212456999812275
+}

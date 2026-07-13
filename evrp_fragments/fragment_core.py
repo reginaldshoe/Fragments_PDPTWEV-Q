@@ -1,7 +1,5 @@
 """Fragment generation and dominance-filtering layer.
 
-Originally mechanically extracted from the consolidated legacy module. This module
-is now maintained directly as the active fragment-generation implementation.
 """
 
 from __future__ import annotations
@@ -9,8 +7,6 @@ import math
 import os
 from time import perf_counter
 
-# Compatibility marker used by pipeline._ensure_generated().
-# The module was originally generated, but is now maintained directly.
 FRAGMENT_CORE_GENERATED = True
 
 # Fragment-build diagnostics and timeout
@@ -361,10 +357,10 @@ def dedup_exact(frags):
     _fragment_build_log("PHASE-START", phase="dedup_exact", input_count=len(frags))
     seen = set()
     out = []
-    for _v4e_idx, f in enumerate(frags):
-        if _v4e_idx % _fragment_build_progress_interval() == 0:
-            _fragment_build_check_timeout("extend_fragments", processed=_v4e_idx, input_count=len(frags), extended_raw=len(out))
-            _fragment_build_log("PROGRESS", phase="extend_fragments", processed=_v4e_idx, input_count=len(frags), extended_raw=len(out))
+    for idx, f in enumerate(frags):
+        if idx % _fragment_build_progress_interval() == 0:
+            _fragment_build_check_timeout("extend_fragments", processed=idx, input_count=len(frags), extended_raw=len(out))
+            _fragment_build_log("PROGRESS", phase="extend_fragments", processed=idx, input_count=len(frags), extended_raw=len(out))
         sig = (f['seq'], f['start_onboard'], f['end_onboard'])
         if sig in seen:
             continue
@@ -387,9 +383,9 @@ def dedup_by_signature(frags):
 def attach_metadata(data, frags, exclude_last_ef = False):
     _fragment_build_log("PHASE-START", phase="attach_metadata", input_count=len(frags), exclude_last_ef=exclude_last_ef)
     out = []
-    for _v4e_idx, f in enumerate(frags):
-        if _v4e_idx % _fragment_build_progress_interval() == 0:
-            _fragment_build_check_timeout("attach_metadata", processed=_v4e_idx, input_count=len(frags), output_count=len(out), exclude_last_ef=exclude_last_ef)
+    for idx, f in enumerate(frags):
+        if idx % _fragment_build_progress_interval() == 0:
+            _fragment_build_check_timeout("attach_metadata", processed=idx, input_count=len(frags), output_count=len(out), exclude_last_ef=exclude_last_ef)
         seq = f['seq']
         Tf, Ef, Lf = compute_T_E_L(data, seq)
         g = dict(f)
@@ -434,16 +430,16 @@ def filter_by_key(items):
 def dominance_filter(items):
     _fragment_build_log("PHASE-START", phase="dominance_filter", input_count=len(items))
     buckets = {}
-    for _v4e_idx, f in enumerate(items):
-        if _v4e_idx % _fragment_build_progress_interval() == 0:
-            _fragment_build_check_timeout("dominance_filter_bucket", processed=_v4e_idx, input_count=len(items), buckets=len(buckets))
+    for idx, f in enumerate(items):
+        if idx % _fragment_build_progress_interval() == 0:
+            _fragment_build_check_timeout("dominance_filter_bucket", processed=idx, input_count=len(items), buckets=len(buckets))
         buckets.setdefault(f['dom_key'], []).append(f)
     _fragment_build_log("COUNT", phase="dominance_filter_bucketed", buckets=len(buckets))
     out = []
-    for _v4e_idx, (key, group) in enumerate(buckets.items()):
-        if _v4e_idx % max(1, _fragment_build_progress_interval() // 10) == 0:
-            _fragment_build_check_timeout("dominance_filter_groups", processed=_v4e_idx, buckets=len(buckets), output_count=len(out))
-            _fragment_build_log("PROGRESS", phase="dominance_filter_groups", processed=_v4e_idx, buckets=len(buckets), output_count=len(out), current_group_size=len(group))
+    for idx, (key, group) in enumerate(buckets.items()):
+        if idx % max(1, _fragment_build_progress_interval() // 10) == 0:
+            _fragment_build_check_timeout("dominance_filter_groups", processed=idx, buckets=len(buckets), output_count=len(out))
+            _fragment_build_log("PROGRESS", phase="dominance_filter_groups", processed=idx, buckets=len(buckets), output_count=len(out), current_group_size=len(group))
         out.extend(filter_by_key(group))
     _fragment_build_log("PHASE-END", phase="dominance_filter", output_count=len(out), buckets=len(buckets))
     return out
@@ -638,26 +634,14 @@ def _print_base_path_dominance_event(depth, before, after, removed, keys=0, max_
 
 # Backwards-compatible name retained because enumerate_base_paths may already call it.
 _bp_print_dominance_event = _print_base_path_dominance_event
-# === BASE_PATH_WORKING_SET_DOMINANCE: end ===
 
-# === BASE_PATH_DOMINANCE_FREEZE_NOTE: start ===
-# Frozen base-path reduction method.
-#
-# Active behaviour:
+#  behaviour:
 # - Generate the full next depth layer as NewWork.
 # - Apply conservative local dominance to NewWork immediately before Work = NewWork.
-# - Keep step-level dominance disabled by default because it over-pruned c103C16_2.
 #
 # State tuple shape:
 #   (path, phase, onboard, E, t_depart, seenP, seenD, seenS, deliv_count, distance)
 #
-# Validation status:
-# - c103C16 preserves the benchmark objective under local NewWork dominance.
-# - c103C16_2 is a queueing-required build/callback stress case, not an optimality
-#   benchmark until queueing is implemented.
-# - The reduction is empirically validated for the current test path but is not a
-#   formal proof of exactness for all instances.
-# === BASE_PATH_DOMINANCE_FREEZE_NOTE: end ===
 
 def enumerate_base_paths(data, maxlen):
     _fragment_build_log("PHASE-START", phase="enumerate_base_paths", maxlen=maxlen)
@@ -705,15 +689,72 @@ def enumerate_base_paths(data, maxlen):
     # set of base paths
     _fragment_build_log("COUNT", phase="base_path_seed", seed_work=len(Work))
     Base = set()
+    _bp_completed_depth = -1
+    _bp_last_completed_base = set(Base)
+
+    # Partial timeout handling, get statistics even if enumeration does not complete
+    def _bp_allow_partial_timeout():
+        return os.getenv("EVRP_FRAGMENT_ALLOW_PARTIAL_BASE_PATHS", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _bp_partial_timeout_metadata(status, timeout_depth, base_count, discarded_incomplete_layer):
+        partial = status == "partial_timeout"
+        return {
+            "fragment_generation_status": status,
+            "partial_base_paths_used": partial,
+            "base_paths_complete": not partial,
+            "completed_base_path_depth": _bp_completed_depth,
+            "timeout_depth": timeout_depth,
+            "timeout_elapsed_sec": _fragment_build_elapsed(),
+            "timeout_limit_sec": _fragment_build_time_limit(),
+            "discarded_incomplete_layer": bool(discarded_incomplete_layer),
+            "base_paths_returned": int(base_count),
+            "model_scope": "partial_fragment_model" if partial else "full_fragment_model",
+            "bounds_scope": "partial_fragment_model" if partial else "full_fragment_model",
+            "exactness_claim": not partial,
+        }
+
+    def _bp_handle_timeout(depth, processed=None):
+        limit = _fragment_build_time_limit()
+        if limit is None or _fragment_build_elapsed() <= limit:
+            return None
+        if _bp_allow_partial_timeout():
+            pruned.update(_bp_partial_timeout_metadata(
+                "partial_timeout",
+                depth,
+                len(_bp_last_completed_base),
+                True,
+            ))
+            print(
+                "[FRAGMENT-TIMEOUT] partial_base_paths_used=True"
+                + " completed_depth=" + str(_bp_completed_depth)
+                + " timeout_depth=" + str(depth)
+                + " processed=" + str(processed)
+                + " base_paths_returned=" + str(len(_bp_last_completed_base)),
+                flush=True,
+            )
+            return list(_bp_last_completed_base), pruned
+        raise TimeoutError(
+            "fragment build time limit reached during enumerate_base_paths: "
+            + "elapsed=" + str(_fragment_build_elapsed())
+            + " limit=" + str(limit)
+            + " depth=" + str(depth)
+            + " processed=" + str(processed)
+        )
     for depth in range(maxlen):
-        _fragment_build_check_timeout("enumerate_base_paths", depth=depth, work=len(Work), base=len(Base))
+        _bp_partial_timeout_result = _bp_handle_timeout(depth, processed=None)
+
+        if _bp_partial_timeout_result is not None:
+
+            return _bp_partial_timeout_result
         _fragment_build_log("PROGRESS", phase="enumerate_base_paths", depth=depth, work=len(Work), base=len(Base))
         NewWork = set()
 
         # check each working path to see if it can be completed, otherwise attempt extension
-        for _v4e_idx, st in enumerate(Work):
-            if _v4e_idx % _fragment_build_progress_interval() == 0:
-                _fragment_build_check_timeout("enumerate_base_paths", depth=depth, processed=_v4e_idx, work=len(Work), base=len(Base))
+        for idx, st in enumerate(Work):
+            if idx % _fragment_build_progress_interval() == 0:
+                _bp_partial_timeout_result = _bp_handle_timeout(depth, processed=idx)
+                if _bp_partial_timeout_result is not None:
+                    return _bp_partial_timeout_result
             path, phase, onboard, E, t_depart, seenP, seenD, seenS, deliv_count,distance = st
 
             # base path complete (i.e. empty + currently in delivery phase + at least one delivery)
@@ -768,12 +809,19 @@ def enumerate_base_paths(data, maxlen):
             source='local_newwork',
         )
         Work = NewWork
+        _bp_completed_depth = depth
+        _bp_last_completed_base = set(Base)
         if not Work:
             break
 
     _fragment_build_log("PHASE-END", phase="enumerate_base_paths", base_paths=len(Base), pruned=pruned)
+    pruned.update(_bp_partial_timeout_metadata(
+        'complete',
+        None,
+        len(Base),
+        False,
+    ))
     return list(Base), pruned
-
 def trim_base_path(data, base_path):
 
     nodes = data['nodes']
@@ -859,10 +907,10 @@ def trim_base_path(data, base_path):
 def enumerate_fragments(data, base_paths):
     _fragment_build_log("PHASE-START", phase="enumerate_restricted_fragments", base_paths=len(base_paths))
     frags = []
-    for _v4e_idx, bp in enumerate(base_paths):
-        if _v4e_idx % _fragment_build_progress_interval() == 0:
-            _fragment_build_check_timeout("enumerate_restricted_fragments", processed=_v4e_idx, base_paths=len(base_paths), restricted_raw=len(frags))
-            _fragment_build_log("PROGRESS", phase="enumerate_restricted_fragments", processed=_v4e_idx, base_paths=len(base_paths), restricted_raw=len(frags))
+    for idx, bp in enumerate(base_paths):
+        if idx % _fragment_build_progress_interval() == 0:
+            _fragment_build_check_timeout("enumerate_restricted_fragments", processed=idx, base_paths=len(base_paths), restricted_raw=len(frags))
+            _fragment_build_log("PROGRESS", phase="enumerate_restricted_fragments", processed=idx, base_paths=len(base_paths), restricted_raw=len(frags))
         frags.extend(trim_base_path(data, bp))
     _fragment_build_log("PHASE-END", phase="enumerate_restricted_fragments", restricted_raw=len(frags))
     return frags

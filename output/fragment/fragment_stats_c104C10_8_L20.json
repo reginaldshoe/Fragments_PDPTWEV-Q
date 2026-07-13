@@ -1,0 +1,288 @@
+{
+  "base_paths": {
+    "dominance_events_from_log": [
+      {
+        "after": 776,
+        "before": 776,
+        "depth": 0,
+        "keys": 776,
+        "max_bucket_size": 1,
+        "removal_rate": 0.0,
+        "removed": 0,
+        "source": "local_newwork"
+      },
+      {
+        "after": 2640,
+        "before": 4248,
+        "depth": 1,
+        "keys": 1664,
+        "max_bucket_size": 4,
+        "removal_rate": 0.3785310734463277,
+        "removed": 1608,
+        "source": "local_newwork"
+      },
+      {
+        "after": 7952,
+        "before": 11664,
+        "depth": 2,
+        "keys": 2824,
+        "max_bucket_size": 10,
+        "removal_rate": 0.31824417009602196,
+        "removed": 3712,
+        "source": "local_newwork"
+      },
+      {
+        "after": 13136,
+        "before": 22288,
+        "depth": 3,
+        "keys": 3824,
+        "max_bucket_size": 36,
+        "removal_rate": 0.4106245513280689,
+        "removed": 9152,
+        "source": "local_newwork"
+      },
+      {
+        "after": 21712,
+        "before": 32368,
+        "depth": 4,
+        "keys": 4968,
+        "max_bucket_size": 54,
+        "removal_rate": 0.3292140385565991,
+        "removed": 10656,
+        "source": "local_newwork"
+      },
+      {
+        "after": 30032,
+        "before": 47936,
+        "depth": 5,
+        "keys": 2696,
+        "max_bucket_size": 48,
+        "removal_rate": 0.373497997329773,
+        "removed": 17904,
+        "source": "local_newwork"
+      },
+      {
+        "after": 26208,
+        "before": 51408,
+        "depth": 6,
+        "keys": 1848,
+        "max_bucket_size": 84,
+        "removal_rate": 0.49019607843137253,
+        "removed": 25200,
+        "source": "local_newwork"
+      },
+      {
+        "after": 22176,
+        "before": 40320,
+        "depth": 7,
+        "keys": 1176,
+        "max_bucket_size": 84,
+        "removal_rate": 0.45,
+        "removed": 18144,
+        "source": "local_newwork"
+      },
+      {
+        "after": 12096,
+        "before": 26208,
+        "depth": 8,
+        "keys": 840,
+        "max_bucket_size": 108,
+        "removal_rate": 0.5384615384615384,
+        "removed": 14112,
+        "source": "local_newwork"
+      },
+      {
+        "after": 2016,
+        "before": 8064,
+        "depth": 9,
+        "keys": 168,
+        "max_bucket_size": 48,
+        "removal_rate": 0.75,
+        "removed": 6048,
+        "source": "local_newwork"
+      },
+      {
+        "after": 0,
+        "before": 0,
+        "depth": 10,
+        "keys": 0,
+        "max_bucket_size": 0,
+        "removal_rate": null,
+        "removed": 0,
+        "source": "local_newwork"
+      }
+    ],
+    "generation_time_sec": 4.890805400034878,
+    "length_distribution": {
+      "10": 4032,
+      "11": 2016,
+      "2": 24,
+      "3": 72,
+      "4": 224,
+      "5": 992,
+      "6": 4688,
+      "7": 5840,
+      "8": 8064,
+      "9": 4032
+    },
+    "metadata": {
+      "capacity": 409816,
+      "energy": 74312,
+      "prev_station": 71800
+    },
+    "metadata_depth_layers": null,
+    "metadata_dominance_statistics": null,
+    "metadata_pruning_by_reason": null,
+    "metadata_time_like_fields": null,
+    "total": 29984
+  },
+  "captured_log_summary": {
+    "base_path_dominance_event_count": 11,
+    "line_count": 11,
+    "log_file": "fragment_stats_c104C10_8_L20.json.log"
+  },
+  "completed_stages": [
+    "read_instance",
+    "base_path_generation",
+    "restricted_generation",
+    "restricted_dedup",
+    "restricted_metadata",
+    "restricted_dominance",
+    "extended_generation",
+    "extended_dedup",
+    "extended_metadata",
+    "extended_dominance"
+  ],
+  "current_stage": null,
+  "exception": null,
+  "extended_fragments": {
+    "dedup": 1312120,
+    "dedup_length_distribution": {
+      "3": 22552,
+      "4": 84368,
+      "5": 262816,
+      "6": 385008,
+      "7": 394176,
+      "8": 163200
+    },
+    "deduplication": {
+      "input": 1312120,
+      "output": 1312120,
+      "removal_rate": 0.0,
+      "removed": 0
+    },
+    "dominance": {
+      "input": 1312120,
+      "output": 1274488,
+      "removal_rate": 0.02868030363076548,
+      "removed": 37632
+    },
+    "extension_statistics": {
+      "accepted_total": 1312120,
+      "depot_extensions": 19696,
+      "direct_pickup_extensions": 1292424,
+      "failed_extensions": null,
+      "failed_extensions_note": "Not exposed by extend_all_fragments(); this script reports accepted extended fragments only.",
+      "missing_ext_to": 0,
+      "other_extensions": 0,
+      "pickup_extensions": 1292424,
+      "station_mediated_pickup_extensions": 0
+    },
+    "generation_time_sec": 5.37208840000676,
+    "metadata": 1312120,
+    "raw": 1312120,
+    "raw_length_distribution": {
+      "3": 22552,
+      "4": 84368,
+      "5": 262816,
+      "6": 385008,
+      "7": 394176,
+      "8": 163200
+    },
+    "total_processing_time_sec": 33.55775040003937,
+    "undominated": 1274488,
+    "undominated_length_distribution": {
+      "3": 22552,
+      "4": 84368,
+      "5": 249824,
+      "6": 382832,
+      "7": 376768,
+      "8": 158144
+    }
+  },
+  "failed_stage": null,
+  "fragment_time_limit_sec": 1800.0,
+  "instance": ".\\instances\\c104C10_8.txt",
+  "max_base_path_len": 20,
+  "restricted_fragments": {
+    "dedup": 114440,
+    "dedup_length_distribution": {
+      "10": 4032,
+      "11": 2016,
+      "2": 1328,
+      "3": 5368,
+      "4": 12064,
+      "5": 19632,
+      "6": 22832,
+      "7": 22976,
+      "8": 16128,
+      "9": 8064
+    },
+    "deduplication": {
+      "input": 240608,
+      "output": 114440,
+      "removal_rate": 0.5243715919670169,
+      "removed": 126168
+    },
+    "dominance": {
+      "input": 114440,
+      "output": 45608,
+      "removal_rate": 0.6014680181754631,
+      "removed": 68832
+    },
+    "generation_time_sec": 1.069895800028462,
+    "metadata": 114440,
+    "pruning_by_reason": null,
+    "pruning_by_reason_note": "Not exposed by the current restricted-fragment enumeration interface.",
+    "raw": 240608,
+    "raw_length_distribution": {
+      "10": 4032,
+      "11": 2016,
+      "2": 3160,
+      "3": 31432,
+      "4": 37776,
+      "5": 56912,
+      "6": 38960,
+      "7": 38096,
+      "8": 18144,
+      "9": 10080
+    },
+    "total_processing_time_sec": 3.511032000009436,
+    "undominated": 45608,
+    "undominated_length_distribution": {
+      "2": 1328,
+      "3": 4552,
+      "4": 10816,
+      "5": 13328,
+      "6": 11296,
+      "7": 4288
+    }
+  },
+  "script": "run_fragment_generation_stats.py",
+  "stage_times_sec": {
+    "base_path_generation": 4.890805400034878,
+    "extended_dedup": 2.0864465000340715,
+    "extended_dominance": 7.510501999990083,
+    "extended_generation": 5.37208840000676,
+    "extended_metadata": 18.588713500008453,
+    "read_instance": 0.023470999964047223,
+    "restricted_dedup": 0.3857581000193022,
+    "restricted_dominance": 0.3908293999847956,
+    "restricted_generation": 1.069895800028462,
+    "restricted_metadata": 1.6645486999768764
+  },
+  "stats_schema_version": "v6b1-hard-timeout",
+  "status": "completed",
+  "timeout_mode": "subprocess_wall_clock",
+  "total_fragment_pipeline_time_sec": 48.50967130000936
+}

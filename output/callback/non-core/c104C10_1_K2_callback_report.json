@@ -1,0 +1,233 @@
+{
+  "bound_interpretation": {
+    "lower_bound": "best bound from Gurobi callback best_bound",
+    "relative_gap": "abs(upper_bound - lower_bound) / abs(upper_bound) when available",
+    "runtime_seconds": "Gurobi callback runtime only; excludes fragment preprocessing",
+    "upper_bound": "best incumbent objective from Gurobi callback best_obj"
+  },
+  "bounds": {
+    "lower_bound": 361.1755622630477,
+    "node_count": 0.0,
+    "relative_gap": 0.0029796230774952253,
+    "runtime_seconds": 0.02499985694885254,
+    "snapshots": 15,
+    "upper_bound": 362.25494545847255
+  },
+  "dp_internal_summary": {
+    "arrival_count": {
+      "0": 19,
+      "1": 21,
+      "2": 107,
+      "3": 62,
+      "4": 5
+    },
+    "arrival_label_dominated": 501,
+    "arrival_label_dominated_by_leg": {
+      "C1->C10": 8,
+      "C1->C4": 4,
+      "C1->C5": 4,
+      "C1->C8": 12,
+      "C10->C2": 15,
+      "C10->C8": 12,
+      "C2->C1": 15,
+      "C2->C8": 10,
+      "C2->D0": 51,
+      "C3->D0": 27,
+      "C4->C10": 5,
+      "C4->C2": 32,
+      "C4->C6": 14,
+      "C4->C9": 5,
+      "C5->C6": 28,
+      "C5->C7": 5,
+      "C5->D0": 10,
+      "C6->C3": 108,
+      "C7->C1": 3,
+      "C7->C4": 18,
+      "C7->C8": 8,
+      "C8->C4": 3,
+      "C8->C6": 8,
+      "C8->C7": 32,
+      "C9->C1": 4,
+      "C9->C5": 12,
+      "D0->C1": 16,
+      "D0->C10": 6,
+      "D0->C7": 8,
+      "D0->C9": 18
+    },
+    "arrival_labels_removed_by_new": 49,
+    "candidate_nodes_considered": 5305,
+    "destination_time_window_rejections": 0,
+    "destination_tw_by_leg": {},
+    "energy_infeasible_by_leg": {
+      "C1->C4": 4,
+      "C1->C5": 3,
+      "C1->C8": 17,
+      "C10->C2": 14,
+      "C10->C8": 12,
+      "C2->C1": 6,
+      "C2->C8": 9,
+      "C2->D0": 18,
+      "C3->D0": 43,
+      "C4->C10": 3,
+      "C4->C2": 8,
+      "C4->C6": 6,
+      "C4->C9": 3,
+      "C5->C6": 24,
+      "C5->C7": 1,
+      "C5->D0": 12,
+      "C6->C3": 58,
+      "C7->C8": 5,
+      "C8->C4": 8,
+      "C8->C6": 31,
+      "C8->C7": 48
+    },
+    "energy_infeasible_transitions": 333,
+    "leg_frontier_calls": 214,
+    "leg_frontier_no_arrivals": 19,
+    "leg_frontier_success": 195,
+    "no_arrivals_by_leg": {
+      "C1->C8": 1,
+      "C10->C2": 1,
+      "C3->D0": 5,
+      "C5->C6": 4,
+      "C5->D0": 2,
+      "C6->C3": 3,
+      "C8->C6": 3
+    },
+    "route_label_cap_labels_removed": 0,
+    "route_label_cap_truncations": 0,
+    "route_label_dominated": 199,
+    "route_labels_removed_by_new": 7,
+    "station_budget_exhausted_states": 0,
+    "station_horizon_by_leg": {},
+    "station_horizon_rejections": 0,
+    "station_label_dominated": 2033,
+    "station_label_dominated_by_leg": {
+      "C1->C10": 48,
+      "C1->C4": 18,
+      "C1->C5": 20,
+      "C1->C8": 56,
+      "C10->C2": 63,
+      "C10->C8": 84,
+      "C2->C1": 48,
+      "C2->C8": 48,
+      "C2->D0": 168,
+      "C3->D0": 81,
+      "C4->C10": 34,
+      "C4->C2": 136,
+      "C4->C6": 40,
+      "C4->C9": 34,
+      "C5->C6": 92,
+      "C5->C7": 23,
+      "C5->D0": 46,
+      "C6->C3": 282,
+      "C7->C1": 12,
+      "C7->C4": 108,
+      "C7->C8": 40,
+      "C8->C4": 24,
+      "C8->C6": 72,
+      "C8->C7": 120,
+      "C9->C1": 24,
+      "C9->C5": 144,
+      "D0->C1": 48,
+      "D0->C10": 24,
+      "D0->C7": 24,
+      "D0->C9": 72
+    },
+    "station_revisit_blocked": 254
+  },
+  "feasibility_cut_pruning_summary": {
+    "candidate_size": {},
+    "front_prune_failure": 0,
+    "front_prune_success": 0,
+    "front_removed": {},
+    "prefix_size": {},
+    "rear_removed": {},
+    "reason": {},
+    "route_size": {},
+    "total": 0
+  },
+  "feasibility_cut_summary": {
+    "active": 0,
+    "cut_size": {},
+    "fallback": 0,
+    "full_size": {},
+    "pattern": {},
+    "reason": {},
+    "total": 0
+  },
+  "objective_sense": "minimize",
+  "optimality_cut_summary": {
+    "delta_total_count": 7,
+    "delta_total_max": 18.32232013138332,
+    "delta_total_min": 2.158766390849763,
+    "delta_total_sum": 50.59368512232166,
+    "positive_delta_routes": {
+      "1": 3,
+      "2": 4
+    },
+    "route_count": {
+      "2": 7
+    },
+    "selected_arc_count": {
+      "6": 6,
+      "7": 1
+    },
+    "total": 7
+  },
+  "route_dp_summary": {
+    "fail_i": {},
+    "failed_edge": {},
+    "failure": 0,
+    "route_size": {
+      "2": 2,
+      "3": 9,
+      "4": 3
+    },
+    "skeleton_size": {
+      "10": 2,
+      "4": 2,
+      "6": 5,
+      "8": 5
+    },
+    "skipped_short_skeleton": 0,
+    "success": 14,
+    "total_calls": 14
+  },
+  "schema_version": "callback_report_v6c4",
+  "solver_bounds": {
+    "best_bound": 361.1755622630477,
+    "best_obj": 362.25494545847255,
+    "gap": 0.0029796230774952253,
+    "last_where": 3,
+    "node_count": 0.0,
+    "runtime": 0.02499985694885254,
+    "snapshots": 15
+  },
+  "subtour_component_summary": {
+    "aggregate_cut_mode_used": 0,
+    "analysed": 0,
+    "component_arc_size": {},
+    "component_count": {},
+    "component_cut_mode_used": 0,
+    "component_node_size": {},
+    "largest_component_arc_size": {},
+    "smallest_component_arc_size": {}
+  },
+  "subtour_cut_summary": {
+    "bad_cycle_size": {},
+    "chosen_arc_count": {
+      "6": 6,
+      "7": 1
+    },
+    "mipsol_callbacks": 7,
+    "reached_route_dp": 7,
+    "reason": {},
+    "returned_before_route_dp": 0,
+    "route_count": {
+      "2": 7
+    },
+    "routes_checked": 14,
+    "subtour_cuts": 0
+  }
+}

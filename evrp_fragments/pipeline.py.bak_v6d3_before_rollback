@@ -137,8 +137,20 @@ def run_solver(
                 cb_model, where, x_vars, arcs, node_id, depot_u, data, theta, big_m
             )
         )
+        # v6d1 final solver status capture; reporting only.
+        try:
+            from evrp_fragments import callback_core as _v6d1_callback_core
+            _v6d1_callback_core.capture_final_solver_status(model, source='evrp_fragments\pipeline.py:post_optimize')
+        except Exception:
+            pass
     else:
         model.optimize()
+        # v6d1 final solver status capture; reporting only.
+        try:
+            from evrp_fragments import callback_core as _v6d1_callback_core
+            _v6d1_callback_core.capture_final_solver_status(model, source='evrp_fragments\pipeline.py:post_optimize')
+        except Exception:
+            pass
     status = int(getattr(model, "Status", getattr(model, "status", 0)))
     objective_raw = _safe_model_attr(model, "ObjVal", "objVal")
     objective = None if objective_raw is None else float(objective_raw)

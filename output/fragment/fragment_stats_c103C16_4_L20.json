@@ -1,0 +1,159 @@
+{
+  "base_paths": {
+    "dominance_events_from_log": [
+      {
+        "after": 484,
+        "before": 484,
+        "depth": 0,
+        "keys": 484,
+        "max_bucket_size": 1,
+        "removal_rate": 0.0,
+        "removed": 0,
+        "source": "local_newwork"
+      },
+      {
+        "after": 2808,
+        "before": 4088,
+        "depth": 1,
+        "keys": 1922,
+        "max_bucket_size": 5,
+        "removal_rate": 0.3131115459882583,
+        "removed": 1280,
+        "source": "local_newwork"
+      },
+      {
+        "after": 10812,
+        "before": 18332,
+        "depth": 2,
+        "keys": 5106,
+        "max_bucket_size": 12,
+        "removal_rate": 0.4102116517564914,
+        "removed": 7520,
+        "source": "local_newwork"
+      },
+      {
+        "after": 29552,
+        "before": 57248,
+        "depth": 3,
+        "keys": 10077,
+        "max_bucket_size": 42,
+        "removal_rate": 0.48378982671883736,
+        "removed": 27696,
+        "source": "local_newwork"
+      },
+      {
+        "after": 73552,
+        "before": 139920,
+        "depth": 4,
+        "keys": 18049,
+        "max_bucket_size": 192,
+        "removal_rate": 0.4743281875357347,
+        "removed": 66368,
+        "source": "local_newwork"
+      },
+      {
+        "after": 164536,
+        "before": 299464,
+        "depth": 5,
+        "keys": 26619,
+        "max_bucket_size": 432,
+        "removal_rate": 0.4505650094836107,
+        "removed": 134928,
+        "source": "local_newwork"
+      },
+      {
+        "after": 332672,
+        "before": 623032,
+        "depth": 6,
+        "keys": 34823,
+        "max_bucket_size": 624,
+        "removal_rate": 0.4660434777025899,
+        "removed": 290360,
+        "source": "local_newwork"
+      },
+      {
+        "after": 595104,
+        "before": 1197952,
+        "depth": 7,
+        "keys": 32842,
+        "max_bucket_size": 1680,
+        "removal_rate": 0.5032321829255262,
+        "removed": 602848,
+        "source": "local_newwork"
+      },
+      {
+        "after": 955104,
+        "before": 2023088,
+        "depth": 8,
+        "keys": 30566,
+        "max_bucket_size": 6480,
+        "removal_rate": 0.527897946110105,
+        "removed": 1067984,
+        "source": "local_newwork"
+      }
+    ],
+    "generation_time_sec": null,
+    "length_distribution": null,
+    "metadata": null,
+    "metadata_depth_layers": null,
+    "metadata_dominance_statistics": null,
+    "metadata_pruning_by_reason": null,
+    "metadata_time_like_fields": null,
+    "total": null
+  },
+  "captured_log_summary": {
+    "base_path_dominance_event_count": 9,
+    "line_count": 9,
+    "log_file": "fragment_stats_c103C16_4_L20.json.log"
+  },
+  "completed_stages": [
+    "read_instance"
+  ],
+  "current_stage": "base_path_generation",
+  "exception": {
+    "message": "worker process killed after wall-clock timeout: limit=1800.000s",
+    "type": "HardTimeout"
+  },
+  "extended_fragments": {
+    "dedup": null,
+    "dedup_length_distribution": null,
+    "deduplication": null,
+    "dominance": null,
+    "extension_statistics": null,
+    "generation_time_sec": null,
+    "metadata": null,
+    "raw": null,
+    "raw_length_distribution": null,
+    "total_processing_time_sec": null,
+    "undominated": null,
+    "undominated_length_distribution": null
+  },
+  "failed_stage": "base_path_generation",
+  "fragment_time_limit_sec": 1800.0,
+  "hard_timeout_elapsed_sec": 1800.3353685999755,
+  "instance": ".\\instances\\c103C16_4.txt",
+  "max_base_path_len": 20,
+  "restricted_fragments": {
+    "dedup": null,
+    "dedup_length_distribution": null,
+    "deduplication": null,
+    "dominance": null,
+    "generation_time_sec": null,
+    "metadata": null,
+    "pruning_by_reason": null,
+    "pruning_by_reason_note": "Not exposed by the current restricted-fragment enumeration interface.",
+    "raw": null,
+    "raw_length_distribution": null,
+    "total_processing_time_sec": null,
+    "undominated": null,
+    "undominated_length_distribution": null
+  },
+  "script": "run_fragment_generation_stats.py",
+  "stage_times_sec": {
+    "read_instance": 0.017696800001431257
+  },
+  "stats_schema_version": "v6b1-hard-timeout",
+  "status": "hard_timeout",
+  "timeout_mode": "subprocess_wall_clock",
+  "total_fragment_pipeline_time_sec": 0.12344880000455305
+}

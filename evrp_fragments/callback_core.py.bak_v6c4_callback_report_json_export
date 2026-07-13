@@ -672,70 +672,6 @@ def _print_feasibility_cut_summary():
     print("[FEAS-CUT-SUMMARY] top_cut_patterns=" + str([(list(k), v) for k, v in s["pattern"].most_common(20)]))
 
 
-
-# v6c4 JSON callback-report export.
-# Reporting/export only: solver behaviour is unchanged.
-def _json_safe_callback_report_value(value):
-    if isinstance(value, Counter):
-        return {str(k): _json_safe_callback_report_value(v) for k, v in value.items()}
-    if isinstance(value, dict):
-        return {str(k): _json_safe_callback_report_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe_callback_report_value(v) for v in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    try:
-        return float(value)
-    except Exception:
-        return str(value)
-
-def get_callback_report():
-    solver_bounds = globals().get("SOLVER_BOUND_SUMMARY", {})
-    best_obj = solver_bounds.get("best_obj") if isinstance(solver_bounds, dict) else None
-    best_bound = solver_bounds.get("best_bound") if isinstance(solver_bounds, dict) else None
-    gap = solver_bounds.get("gap") if isinstance(solver_bounds, dict) else None
-    report = {
-        "schema_version": "callback_report_v6c4",
-        "objective_sense": "minimize",
-        "bound_interpretation": {
-            "upper_bound": "best incumbent objective from Gurobi callback best_obj",
-            "lower_bound": "best bound from Gurobi callback best_bound",
-            "relative_gap": "abs(upper_bound - lower_bound) / abs(upper_bound) when available",
-            "runtime_seconds": "Gurobi callback runtime only; excludes fragment preprocessing",
-        },
-        "bounds": {
-            "upper_bound": best_obj,
-            "lower_bound": best_bound,
-            "relative_gap": gap,
-            "runtime_seconds": solver_bounds.get("runtime") if isinstance(solver_bounds, dict) else None,
-            "node_count": solver_bounds.get("node_count") if isinstance(solver_bounds, dict) else None,
-            "snapshots": solver_bounds.get("snapshots") if isinstance(solver_bounds, dict) else None,
-        },
-        "solver_bounds": solver_bounds,
-        "subtour_cut_summary": globals().get("SUBTOUR_CUT_SUMMARY", {}),
-        "subtour_component_summary": globals().get("SUBTOUR_COMPONENT_SUMMARY", {}),
-        "feasibility_cut_pruning_summary": globals().get("FEASIBILITY_CUT_PRUNING_SUMMARY", {}),
-        "feasibility_cut_summary": globals().get("FEASIBILITY_CUT_SUMMARY", {}),
-        "route_dp_summary": globals().get("ROUTE_DP_SUMMARY", {}),
-        "optimality_cut_summary": globals().get("OPTIMALITY_CUT_SUMMARY", {}),
-        "dp_internal_summary": globals().get("DP_INTERNAL_SUMMARY", {}),
-    }
-    return _json_safe_callback_report_value(report)
-
-def _write_callback_report_json_from_env():
-    import json as _json
-    import os as _os
-    from pathlib import Path as _Path
-    path_raw = _os.getenv("EVRP_CALLBACK_REPORT_JSON", "").strip()
-    if not path_raw:
-        return
-    path = _Path(path_raw)
-    if path.parent and str(path.parent) not in {"", "."}:
-        path.parent.mkdir(parents=True, exist_ok=True)
-    report = get_callback_report()
-    path.write_text(_json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    print("[CALLBACK-REPORT-JSON] path=" + str(path), flush=True)
-
 # v6c2 reporting-only callback summaries: route-DP outcomes and optimality cuts.
 # Active callback behaviour is unchanged. These counters only observe already-computed
 # route-DP results and already-added optimality cuts.
@@ -849,7 +785,6 @@ atexit.register(_print_solver_bound_summary)
 atexit.register(_print_route_dp_summary)
 atexit.register(_print_optimality_cut_summary)
 atexit.register(_print_dp_internal_summary)
-atexit.register(_write_callback_report_json_from_env)
 # Defines component-summary diagnostics before atexit registration. This fixes
 # definition in callback_core.py.
 import os as os
@@ -871,6 +806,19 @@ if 'SUBTOUR_COMPONENT_SUMMARY' not in globals():
         "largest_component_arc_size": Counter(),
         "smallest_component_arc_size": Counter(),
     }
+
+# Active lazy-cut selection remains unchanged in this overlay.
+
+# Active lazy-cut selection remains the guarded failure-prefix/front-pruned feasibility cut.
+
+# Adds bounded-run diagnostics: front/rear pruning decomposition and solver bound snapshots.
+# Active feasibility-cut logic remains unchanged.
+
+
+# Self-contained subtour and component diagnostics for capped solves.
+# Active behaviour is unchanged by default: aggregate bad_cycle_arcs cut remains active.
+# Optional strengthening: set EVRP_SUBTOUR_COMPONENT_CUTS=1 to cut each disconnected component.
+import os as os
 
 if 'SUBTOUR_CUT_SUMMARY' not in globals():
     SUBTOUR_CUT_SUMMARY = {
@@ -908,7 +856,9 @@ if '_print_subtour_cut_summary' not in globals():
         print("[SUBTOUR-CUT-SUMMARY] route_count_distribution=" + str(dict(sorted(s["route_count"].items()))))
         print("[SUBTOUR-CUT-SUMMARY] reason_distribution=" + str(dict(s["reason"].most_common())))
 
-
+# Component-wise disconnected-subtour cuts are now the default. Use
+# EVRP_SUBTOUR_COMPONENT_CUTS=0/false/no/off/aggregate to force the
+# legacy aggregate cut over the full disconnected arc set.
 SUBTOUR_COMPONENT_CUTS_ENABLED = str(__import__("os").getenv("EVRP_SUBTOUR_COMPONENT_CUTS", "1")).strip().lower() not in {"0", "false", "no", "off", "aggregate"}
 SUBTOUR_COMPONENT_SUMMARY = {
     "analysed": 0,
@@ -1039,7 +989,8 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
             model.cbLazy(gp.quicksum(x_vars[a_id] for a_id in bad_cycle_arcs) <= len(bad_cycle_arcs) - 1)
         return
 
-
+    # v5g queueing callback diagnostic and infeasibility hook.
+    # v5j refinement: fingerprint cut patterns and suppress duplicate cut prints.
     # This runs after disconnected subtour/component cuts and before the energy-DP.
     # extract routes starting from depot
     routes = []
@@ -1065,7 +1016,7 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
     delta_total = 0.0
 
     positive_delta_routes = 0
-    #  process each route
+    # --- process each route ---
     for route in routes:
         sid_seq = []
         for k, aid in enumerate(route):
@@ -1093,8 +1044,7 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
         if not ok:
             # Active guarded front-pruned feasibility cut.
             candidate_info = _find_front_pruned_infeasible_chain(route, arcs, data, fail_i)
-            if (ACTIVE_FEASIBILITY_CUT_ENABLED and candidate_info.get('ok') and
-                    candidate_info.get('candidate_arcs') and candidate_info.get('candidate_size', len(route)) < len(route)):
+            if ACTIVE_FEASIBILITY_CUT_ENABLED and candidate_info.get('ok') and candidate_info.get('candidate_arcs') and candidate_info.get('candidate_size', len(route)) < len(route):
                 S_feas = list(candidate_info['candidate_arcs'])
                 fallback = False
                 reason = 'guarded_candidate_active'
@@ -1103,8 +1053,7 @@ def callback(model, where, x_vars, arcs, node_id, depot_u, data, theta, M):
                 fallback = True
                 reason = candidate_info.get('reason', 'candidate_not_available_or_not_smaller')
             if FEASIBILITY_CUT_PRINT_PER_CUT:
-                print('[FEAS-CUT-ACTIVE]', 'cut_size=', len(S_feas), 'full_size=', len(route),
-                      'fallback=', fallback, 'reason=', reason, 'cut_arcs=', S_feas)
+                print('[FEAS-CUT-ACTIVE]', 'cut_size=', len(S_feas), 'full_size=', len(route), 'fallback=', fallback, 'reason=', reason, 'cut_arcs=', S_feas)
             _record_feasibility_cut_summary(len(route), len(S_feas), fallback, reason, S_feas)
             model.cbLazy(gp.quicksum(x_vars[aid] for aid in S_feas) <= len(S_feas) - 1)
             return

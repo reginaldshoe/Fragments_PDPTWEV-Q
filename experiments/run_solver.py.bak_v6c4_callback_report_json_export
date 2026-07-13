@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 
-import os
 from evrp_fragments.pipeline import run_solver, summary_to_json
 
 
@@ -27,65 +26,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional Gurobi TimeLimit in seconds for bounded diagnostic runs.",
     )
-    parser.add_argument(
-
-        "--callback-report-json",
-
-        "--report-json",
-
-        dest="callback_report_json",
-
-        default=None,
-
-        help="Optional path for JSON export of callback/statistics summaries.",
-
-    )
-
-    parser.add_argument(
-
-
-        "--fragment-time-limit-sec",
-
-
-        type=float,
-
-
-        default=None,
-
-
-        help="Optional cooperative time limit in seconds for base-path generation.",
-
-
-    )
-
-
-    parser.add_argument(
-
-
-        "--solve-with-partial-fragments",
-
-
-        action="store_true",
-
-
-        help="If base-path generation times out, continue with the last completed-depth base-path checkpoint.",
-
-
-    )
-
-
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    if getattr(args, 'fragment_time_limit_sec', None) is not None:
-        os.environ['EVRP_FRAGMENT_BUILD_TIME_LIMIT_SEC'] = str(args.fragment_time_limit_sec)
-    if getattr(args, 'solve_with_partial_fragments', False):
-        os.environ['EVRP_FRAGMENT_ALLOW_PARTIAL_BASE_PATHS'] = '1'
-    if getattr(args, 'callback_report_json', None):
-        os.environ['EVRP_CALLBACK_REPORT_JSON'] = str(args.callback_report_json)
     if args.time_limit_sec is not None and args.time_limit_sec <= 0:
         raise ValueError("--time-limit-sec must be positive when supplied")
 

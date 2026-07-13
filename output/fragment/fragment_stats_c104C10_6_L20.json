@@ -1,0 +1,288 @@
+{
+  "base_paths": {
+    "dominance_events_from_log": [
+      {
+        "after": 462,
+        "before": 462,
+        "depth": 0,
+        "keys": 462,
+        "max_bucket_size": 1,
+        "removal_rate": 0.0,
+        "removed": 0,
+        "source": "local_newwork"
+      },
+      {
+        "after": 1404,
+        "before": 2310,
+        "depth": 1,
+        "keys": 894,
+        "max_bucket_size": 4,
+        "removal_rate": 0.3922077922077922,
+        "removed": 906,
+        "source": "local_newwork"
+      },
+      {
+        "after": 3804,
+        "before": 5664,
+        "depth": 2,
+        "keys": 1454,
+        "max_bucket_size": 10,
+        "removal_rate": 0.3283898305084746,
+        "removed": 1860,
+        "source": "local_newwork"
+      },
+      {
+        "after": 5868,
+        "before": 9936,
+        "depth": 3,
+        "keys": 1940,
+        "max_bucket_size": 36,
+        "removal_rate": 0.40942028985507245,
+        "removed": 4068,
+        "source": "local_newwork"
+      },
+      {
+        "after": 8988,
+        "before": 13680,
+        "depth": 4,
+        "keys": 2450,
+        "max_bucket_size": 54,
+        "removal_rate": 0.3429824561403509,
+        "removed": 4692,
+        "source": "local_newwork"
+      },
+      {
+        "after": 11088,
+        "before": 17820,
+        "depth": 5,
+        "keys": 1098,
+        "max_bucket_size": 48,
+        "removal_rate": 0.37777777777777777,
+        "removed": 6732,
+        "source": "local_newwork"
+      },
+      {
+        "after": 9360,
+        "before": 18360,
+        "depth": 6,
+        "keys": 660,
+        "max_bucket_size": 84,
+        "removal_rate": 0.49019607843137253,
+        "removed": 9000,
+        "source": "local_newwork"
+      },
+      {
+        "after": 7920,
+        "before": 14400,
+        "depth": 7,
+        "keys": 420,
+        "max_bucket_size": 84,
+        "removal_rate": 0.45,
+        "removed": 6480,
+        "source": "local_newwork"
+      },
+      {
+        "after": 4320,
+        "before": 9360,
+        "depth": 8,
+        "keys": 300,
+        "max_bucket_size": 108,
+        "removal_rate": 0.5384615384615384,
+        "removed": 5040,
+        "source": "local_newwork"
+      },
+      {
+        "after": 720,
+        "before": 2880,
+        "depth": 9,
+        "keys": 60,
+        "max_bucket_size": 48,
+        "removal_rate": 0.75,
+        "removed": 2160,
+        "source": "local_newwork"
+      },
+      {
+        "after": 0,
+        "before": 0,
+        "depth": 10,
+        "keys": 0,
+        "max_bucket_size": 0,
+        "removal_rate": null,
+        "removed": 0,
+        "source": "local_newwork"
+      }
+    ],
+    "generation_time_sec": 1.6223309999913909,
+    "length_distribution": {
+      "10": 1440,
+      "11": 720,
+      "2": 18,
+      "3": 54,
+      "4": 120,
+      "5": 540,
+      "6": 2208,
+      "7": 2448,
+      "8": 2880,
+      "9": 1440
+    },
+    "metadata": {
+      "capacity": 131094,
+      "energy": 29946,
+      "prev_station": 27606
+    },
+    "metadata_depth_layers": null,
+    "metadata_dominance_statistics": null,
+    "metadata_pruning_by_reason": null,
+    "metadata_time_like_fields": null,
+    "total": 11868
+  },
+  "captured_log_summary": {
+    "base_path_dominance_event_count": 11,
+    "line_count": 11,
+    "log_file": "fragment_stats_c104C10_6_L20.json.log"
+  },
+  "completed_stages": [
+    "read_instance",
+    "base_path_generation",
+    "restricted_generation",
+    "restricted_dedup",
+    "restricted_metadata",
+    "restricted_dominance",
+    "extended_generation",
+    "extended_dedup",
+    "extended_metadata",
+    "extended_dominance"
+  ],
+  "current_stage": null,
+  "exception": null,
+  "extended_fragments": {
+    "dedup": 380304,
+    "dedup_length_distribution": {
+      "3": 8796,
+      "4": 28116,
+      "5": 81420,
+      "6": 106920,
+      "7": 110556,
+      "8": 44496
+    },
+    "deduplication": {
+      "input": 380304,
+      "output": 380304,
+      "removal_rate": 0.0,
+      "removed": 0
+    },
+    "dominance": {
+      "input": 380304,
+      "output": 364464,
+      "removal_rate": 0.041650889814464215,
+      "removed": 15840
+    },
+    "extension_statistics": {
+      "accepted_total": 380304,
+      "depot_extensions": 7956,
+      "direct_pickup_extensions": 372348,
+      "failed_extensions": null,
+      "failed_extensions_note": "Not exposed by extend_all_fragments(); this script reports accepted extended fragments only.",
+      "missing_ext_to": 0,
+      "other_extensions": 0,
+      "pickup_extensions": 372348,
+      "station_mediated_pickup_extensions": 0
+    },
+    "generation_time_sec": 1.5661671999841928,
+    "metadata": 380304,
+    "raw": 380304,
+    "raw_length_distribution": {
+      "3": 8796,
+      "4": 28116,
+      "5": 81420,
+      "6": 106920,
+      "7": 110556,
+      "8": 44496
+    },
+    "total_processing_time_sec": 9.749334399937652,
+    "undominated": 364464,
+    "undominated_length_distribution": {
+      "3": 8796,
+      "4": 28116,
+      "5": 75984,
+      "6": 105984,
+      "7": 103212,
+      "8": 42372
+    }
+  },
+  "failed_stage": null,
+  "fragment_time_limit_sec": 1800.0,
+  "instance": ".\\instances\\c104C10_6.txt",
+  "max_base_path_len": 20,
+  "restricted_fragments": {
+    "dedup": 44064,
+    "dedup_length_distribution": {
+      "10": 1440,
+      "11": 720,
+      "2": 642,
+      "3": 2382,
+      "4": 5088,
+      "5": 7896,
+      "6": 8688,
+      "7": 8568,
+      "8": 5760,
+      "9": 2880
+    },
+    "deduplication": {
+      "input": 90456,
+      "output": 44064,
+      "removal_rate": 0.5128681347837623,
+      "removed": 46392
+    },
+    "dominance": {
+      "input": 44064,
+      "output": 17844,
+      "removal_rate": 0.5950435729847494,
+      "removed": 26220
+    },
+    "generation_time_sec": 0.34335410001222044,
+    "metadata": 44064,
+    "pruning_by_reason": null,
+    "pruning_by_reason_note": "Not exposed by the current restricted-fragment enumeration interface.",
+    "raw": 90456,
+    "raw_length_distribution": {
+      "10": 1440,
+      "11": 720,
+      "2": 1362,
+      "3": 12258,
+      "4": 14568,
+      "5": 21612,
+      "6": 14448,
+      "7": 13968,
+      "8": 6480,
+      "9": 3600
+    },
+    "total_processing_time_sec": 1.2309673000709154,
+    "undominated": 17844,
+    "undominated_length_distribution": {
+      "2": 642,
+      "3": 1926,
+      "4": 4404,
+      "5": 5004,
+      "6": 4284,
+      "7": 1584
+    }
+  },
+  "script": "run_fragment_generation_stats.py",
+  "stage_times_sec": {
+    "base_path_generation": 1.6223309999913909,
+    "extended_dedup": 0.7802625999902375,
+    "extended_dominance": 2.3320346999680623,
+    "extended_generation": 1.5661671999841928,
+    "extended_metadata": 5.070869899995159,
+    "read_instance": 0.022250399983022362,
+    "restricted_dedup": 0.1398174000205472,
+    "restricted_dominance": 0.1484179000253789,
+    "restricted_generation": 0.34335410001222044,
+    "restricted_metadata": 0.5993779000127688
+  },
+  "stats_schema_version": "v6b1-hard-timeout",
+  "status": "completed",
+  "timeout_mode": "subprocess_wall_clock",
+  "total_fragment_pipeline_time_sec": 15.325800299993716
+}

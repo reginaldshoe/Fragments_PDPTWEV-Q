@@ -689,6 +689,120 @@ def _json_safe_callback_report_value(value):
     except Exception:
         return str(value)
 
+
+
+# v6d1 final solver-status reporting.
+# Reporting/export only: solver behaviour is unchanged.
+FINAL_SOLVER_STATUS = {}
+
+
+def _v6d1_json_safe(value):
+    if isinstance(value, dict):
+        return {str(k): _v6d1_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_v6d1_json_safe(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    try:
+        return float(value)
+    except Exception:
+        return str(value)
+
+
+def _v6d1_safe_get_attr(obj, attr_name, default=None):
+    try:
+        return getattr(obj, attr_name)
+    except Exception:
+        return default
+
+
+def _v6d1_safe_get_param(model, param_name):
+    try:
+        return model.getParamInfo(param_name)[2]
+    except Exception:
+        return None
+
+
+def _v6d1_status_name(status_code):
+    mapping = {
+        1: "LOADED",
+        2: "OPTIMAL",
+        3: "INFEASIBLE",
+        4: "INF_OR_UNBD",
+        5: "UNBOUNDED",
+        6: "CUTOFF",
+        7: "ITERATION_LIMIT",
+        8: "NODE_LIMIT",
+        9: "TIME_LIMIT",
+        10: "SOLUTION_LIMIT",
+        11: "INTERRUPTED",
+        12: "NUMERIC",
+        13: "SUBOPTIMAL",
+        14: "INPROGRESS",
+        15: "USER_OBJ_LIMIT",
+        16: "WORK_LIMIT",
+        17: "MEM_LIMIT",
+    }
+    return mapping.get(status_code, None)
+
+
+def _v6d1_final_gap(obj_val, obj_bound):
+    if obj_val is None or obj_bound is None:
+        return None
+    try:
+        denom = abs(float(obj_val))
+        if denom == 0.0:
+            return None
+        return abs(float(obj_val) - float(obj_bound)) / denom
+    except Exception:
+        return None
+
+
+def capture_final_solver_status(model, *, source="post_optimize", note=None):
+    global FINAL_SOLVER_STATUS
+
+    status_code = _v6d1_safe_get_attr(model, "Status", None)
+    obj_val = _v6d1_safe_get_attr(model, "ObjVal", None)
+    obj_bound = _v6d1_safe_get_attr(model, "ObjBound", None)
+    mip_gap = _v6d1_safe_get_attr(model, "MIPGap", None)
+    runtime = _v6d1_safe_get_attr(model, "Runtime", None)
+    node_count = _v6d1_safe_get_attr(model, "NodeCount", None)
+    sol_count = _v6d1_safe_get_attr(model, "SolCount", None)
+
+    FINAL_SOLVER_STATUS = _v6d1_json_safe({
+        "schema_version": "final_solver_status_v6d1",
+        "source": source,
+        "note": note,
+        "status_code": status_code,
+        "status_name": _v6d1_status_name(status_code),
+        "obj_val": obj_val,
+        "obj_bound": obj_bound,
+        "mip_gap": mip_gap,
+        "relative_gap_recomputed": _v6d1_final_gap(obj_val, obj_bound),
+        "runtime_seconds": runtime,
+        "node_count": node_count,
+        "sol_count": sol_count,
+        "params": {
+            "TimeLimit": _v6d1_safe_get_param(model, "TimeLimit"),
+            "MIPGap": _v6d1_safe_get_param(model, "MIPGap"),
+            "MIPGapAbs": _v6d1_safe_get_param(model, "MIPGapAbs"),
+            "NodeLimit": _v6d1_safe_get_param(model, "NodeLimit"),
+            "SolutionLimit": _v6d1_safe_get_param(model, "SolutionLimit"),
+            "BestObjStop": _v6d1_safe_get_param(model, "BestObjStop"),
+            "BestBdStop": _v6d1_safe_get_param(model, "BestBdStop"),
+            "Cutoff": _v6d1_safe_get_param(model, "Cutoff"),
+        },
+        "interpretation": {
+            "obj_val": "final incumbent objective read after model.optimize() returns",
+            "obj_bound": "final best bound read after model.optimize() returns",
+            "mip_gap": "final solver-reported MIPGap when available",
+            "status_name": "best-effort name for final solver Status code",
+            "callback_solver_bounds": "see solver_bounds for callback-observed diagnostic bounds",
+        },
+    })
+    return FINAL_SOLVER_STATUS
+
+
 def get_callback_report():
     solver_bounds = globals().get("SOLVER_BOUND_SUMMARY", {})
     best_obj = solver_bounds.get("best_obj") if isinstance(solver_bounds, dict) else None
@@ -698,6 +812,7 @@ def get_callback_report():
         "schema_version": "callback_report_v6c4",
         "objective_sense": "minimize",
         "bound_interpretation": {
+        "callback_observed_bounds": "bounds and solver_bounds are callback-observed diagnostics, not final post-optimise solver status",
             "upper_bound": "best incumbent objective from Gurobi callback best_obj",
             "lower_bound": "best bound from Gurobi callback best_bound",
             "relative_gap": "abs(upper_bound - lower_bound) / abs(upper_bound) when available",
@@ -712,6 +827,7 @@ def get_callback_report():
             "snapshots": solver_bounds.get("snapshots") if isinstance(solver_bounds, dict) else None,
         },
         "solver_bounds": solver_bounds,
+        "final_solver_status": globals().get("FINAL_SOLVER_STATUS", {}),
         "subtour_cut_summary": globals().get("SUBTOUR_CUT_SUMMARY", {}),
         "subtour_component_summary": globals().get("SUBTOUR_COMPONENT_SUMMARY", {}),
         "feasibility_cut_pruning_summary": globals().get("FEASIBILITY_CUT_PRUNING_SUMMARY", {}),
@@ -1141,3 +1257,96 @@ def _register_callback_branch_summaries():
     globals()["_CALLBACK_BRANCH_SUMMARY_REGISTERED_NAMES"] = tuple(registered)
 
 _register_callback_branch_summaries()
+
+# v6d2 final reporting bounds wrapper.
+# Reporting/export only: solver behaviour is unchanged.
+_GET_CALLBACK_REPORT_V6D1 = get_callback_report
+
+
+def _v6d2_is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _v6d2_relative_gap(upper_bound, lower_bound):
+    if not _v6d2_is_number(upper_bound) or not _v6d2_is_number(lower_bound):
+        return None
+    denom = abs(float(upper_bound))
+    if denom == 0.0:
+        return None
+    return abs(float(upper_bound) - float(lower_bound)) / denom
+
+
+def _v6d2_final_bounds_from_status(final_status):
+    if not isinstance(final_status, dict):
+        return None
+    obj_val = final_status.get("obj_val")
+    obj_bound = final_status.get("obj_bound")
+    if obj_val is None and obj_bound is None:
+        return None
+    gap = final_status.get("mip_gap")
+    if gap is None:
+        gap = final_status.get("relative_gap_recomputed")
+    if gap is None:
+        gap = _v6d2_relative_gap(obj_val, obj_bound)
+    return {
+        "upper_bound": obj_val,
+        "lower_bound": obj_bound,
+        "relative_gap": gap,
+        "runtime_seconds": final_status.get("runtime_seconds"),
+        "node_count": final_status.get("node_count"),
+        "sol_count": final_status.get("sol_count"),
+        "status_code": final_status.get("status_code"),
+        "status_name": final_status.get("status_name"),
+        "source": "final_solver_status",
+        "interpretation": "Final post-optimise solver attributes for reporting tables; callback diagnostics remain in callback_observed_bounds and solver_bounds.",
+    }
+
+
+def get_callback_report():
+    report = _GET_CALLBACK_REPORT_V6D1()
+    if not isinstance(report, dict):
+        return report
+
+    legacy_bounds = report.get("bounds")
+    if isinstance(legacy_bounds, dict):
+        report["callback_observed_bounds"] = dict(legacy_bounds)
+        report["callback_observed_bounds"]["source"] = "Gurobi callback diagnostics"
+
+    final_status = report.get("final_solver_status")
+    final_bounds = _v6d2_final_bounds_from_status(final_status)
+    if final_bounds is not None:
+        report["reporting_bounds"] = final_bounds
+        report["solve_status_summary"] = {
+            "status_code": final_status.get("status_code"),
+            "status_name": final_status.get("status_name"),
+            "is_optimal": final_status.get("status_name") == "OPTIMAL",
+            "upper_bound": final_bounds.get("upper_bound"),
+            "lower_bound": final_bounds.get("lower_bound"),
+            "relative_gap": final_bounds.get("relative_gap"),
+            "runtime_seconds": final_bounds.get("runtime_seconds"),
+            "node_count": final_bounds.get("node_count"),
+            "sol_count": final_bounds.get("sol_count"),
+            "bound_source": "final_solver_status",
+        }
+    else:
+        report["reporting_bounds"] = legacy_bounds
+        report["solve_status_summary"] = {
+            "status_code": None,
+            "status_name": None,
+            "is_optimal": None,
+            "upper_bound": legacy_bounds.get("upper_bound") if isinstance(legacy_bounds, dict) else None,
+            "lower_bound": legacy_bounds.get("lower_bound") if isinstance(legacy_bounds, dict) else None,
+            "relative_gap": legacy_bounds.get("relative_gap") if isinstance(legacy_bounds, dict) else None,
+            "runtime_seconds": legacy_bounds.get("runtime_seconds") if isinstance(legacy_bounds, dict) else None,
+            "node_count": legacy_bounds.get("node_count") if isinstance(legacy_bounds, dict) else None,
+            "sol_count": None,
+            "bound_source": "callback_observed_bounds",
+        }
+
+    report["schema_version"] = "callback_report_v6d2_final_reporting_bounds"
+    report["reporting_note"] = (
+        "For tables, use solve_status_summary or reporting_bounds. "
+        "The legacy bounds and solver_bounds fields are callback-observed diagnostics."
+    )
+    return report
+

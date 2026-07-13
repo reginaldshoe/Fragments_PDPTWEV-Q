@@ -1,0 +1,149 @@
+{
+  "base_paths": {
+    "dominance_events_from_log": [
+      {
+        "after": 380,
+        "before": 380,
+        "depth": 0,
+        "keys": 380,
+        "max_bucket_size": 1,
+        "removal_rate": 0.0,
+        "removed": 0,
+        "source": "local_newwork"
+      },
+      {
+        "after": 2060,
+        "before": 3360,
+        "depth": 1,
+        "keys": 1560,
+        "max_bucket_size": 4,
+        "removal_rate": 0.3869047619047619,
+        "removed": 1300,
+        "source": "local_newwork"
+      },
+      {
+        "after": 6995,
+        "before": 13475,
+        "depth": 2,
+        "keys": 3410,
+        "max_bucket_size": 10,
+        "removal_rate": 0.48089053803339515,
+        "removed": 6480,
+        "source": "local_newwork"
+      },
+      {
+        "after": 19240,
+        "before": 35215,
+        "depth": 3,
+        "keys": 6180,
+        "max_bucket_size": 36,
+        "removal_rate": 0.45364191395712056,
+        "removed": 15975,
+        "source": "local_newwork"
+      },
+      {
+        "after": 47880,
+        "before": 78375,
+        "depth": 4,
+        "keys": 8959,
+        "max_bucket_size": 168,
+        "removal_rate": 0.3890909090909091,
+        "removed": 30495,
+        "source": "local_newwork"
+      },
+      {
+        "after": 123690,
+        "before": 188185,
+        "depth": 5,
+        "keys": 10859,
+        "max_bucket_size": 960,
+        "removal_rate": 0.3427212583362117,
+        "removed": 64495,
+        "source": "local_newwork"
+      },
+      {
+        "after": 307560,
+        "before": 457340,
+        "depth": 6,
+        "keys": 12064,
+        "max_bucket_size": 2640,
+        "removal_rate": 0.32750251454060436,
+        "removed": 149780,
+        "source": "local_newwork"
+      },
+      {
+        "after": 731300,
+        "before": 1112220,
+        "depth": 7,
+        "keys": 10584,
+        "max_bucket_size": 3600,
+        "removal_rate": 0.3424861987736239,
+        "removed": 380920,
+        "source": "local_newwork"
+      }
+    ],
+    "generation_time_sec": null,
+    "length_distribution": null,
+    "metadata": null,
+    "metadata_depth_layers": null,
+    "metadata_dominance_statistics": null,
+    "metadata_pruning_by_reason": null,
+    "metadata_time_like_fields": null,
+    "total": null
+  },
+  "captured_log_summary": {
+    "base_path_dominance_event_count": 8,
+    "line_count": 8,
+    "log_file": "fragment_stats_c101C12_5_L20.json.log"
+  },
+  "completed_stages": [
+    "read_instance"
+  ],
+  "current_stage": "base_path_generation",
+  "exception": {
+    "message": "worker process killed after wall-clock timeout: limit=1800.000s",
+    "type": "HardTimeout"
+  },
+  "extended_fragments": {
+    "dedup": null,
+    "dedup_length_distribution": null,
+    "deduplication": null,
+    "dominance": null,
+    "extension_statistics": null,
+    "generation_time_sec": null,
+    "metadata": null,
+    "raw": null,
+    "raw_length_distribution": null,
+    "total_processing_time_sec": null,
+    "undominated": null,
+    "undominated_length_distribution": null
+  },
+  "failed_stage": "base_path_generation",
+  "fragment_time_limit_sec": 1800.0,
+  "hard_timeout_elapsed_sec": 1800.2633978000376,
+  "instance": ".\\instances\\c101C12_5.txt",
+  "max_base_path_len": 20,
+  "restricted_fragments": {
+    "dedup": null,
+    "dedup_length_distribution": null,
+    "deduplication": null,
+    "dominance": null,
+    "generation_time_sec": null,
+    "metadata": null,
+    "pruning_by_reason": null,
+    "pruning_by_reason_note": "Not exposed by the current restricted-fragment enumeration interface.",
+    "raw": null,
+    "raw_length_distribution": null,
+    "total_processing_time_sec": null,
+    "undominated": null,
+    "undominated_length_distribution": null
+  },
+  "script": "run_fragment_generation_stats.py",
+  "stage_times_sec": {
+    "read_instance": 0.02596200001426041
+  },
+  "stats_schema_version": "v6b1-hard-timeout",
+  "status": "hard_timeout",
+  "timeout_mode": "subprocess_wall_clock",
+  "total_fragment_pipeline_time_sec": 0.12401779997162521
+}
